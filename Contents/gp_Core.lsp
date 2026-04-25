@@ -1,6 +1,71 @@
-(vl-load-com) 
+(vl-load-com)
 
-;; --- 1. DEFINICJA BLOKU --- 
+;; ======================================================
+;; POMOCNICZE: PARSOWANIE TAGÓW I KONFIGURACJA
+;; ======================================================
+
+(defun geocad-parse-tags (str / res tmp)
+  (setq res '() tmp "")
+  (if (and str (/= str ""))
+    (foreach ch (vl-string->list (strcase str))
+      (if (member ch '(44 59 32 9)) 
+        (if (/= tmp "") (progn (setq res (cons tmp res)) (setq tmp "")))
+        (setq tmp (strcat tmp (chr ch)))
+      )
+    )
+  )
+  (if (/= tmp "") (setq res (cons tmp res)))
+  (reverse res)
+)
+
+(defun geocad-get-cfg (klucz domyslny / val)
+  (setq val (vl-registry-read "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" klucz))
+  (if (not val) (progn (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" klucz domyslny) domyslny) val)
+)
+
+;; ======================================================
+;; MÓZG: GENERATOR NUMERACJI I RADAR
+;; ======================================================
+
+(defun GP:PobierzNastepnyNumer ( / pref nr )
+  (setq pref (geocad-get-cfg "PiktPrefix" ""))
+  (setq nr (vlax-ldata-get "GeoLicznik" pref))
+  (if (not nr) (setq nr 1))
+  (vlax-ldata-put "GeoLicznik" pref (1+ nr))
+  (itoa nr)
+)
+
+(defun get-pt-from-obj (obj / type pt-list val z-tags)   
+  (setq type (vla-get-ObjectName obj))
+  (setq z-tags (geocad-parse-tags (geocad-get-cfg "ZTags" "H,Z,RZEDNA")))
+  
+  (cond   
+    ((= type "AcDbPoint")   
+     (setq pt-list (vlax-safearray->list (vlax-variant-value (vla-get-Coordinates obj))))  
+    )  
+    ((member type '("AcDbBlockReference" "AcDbText" "AcDbMText"))  
+     (setq pt-list (vlax-safearray->list (vlax-variant-value (vla-get-InsertionPoint obj))))  
+     (if (= type "AcDbBlockReference")    
+       (foreach att (vlax-invoke obj 'GetAttributes)    
+         (if (member (strcase (vla-get-TagString att)) z-tags)  
+           (progn  
+             (setq val (vla-get-TextString att))  
+             (if (and val (/= val "") (/= val "---") (distof (vl-string-translate "," "." val)))  
+               (setq pt-list (list (car pt-list) (cadr pt-list) (atof (vl-string-translate "," "." val))))  
+             )  
+           )  
+         )  
+       )  
+     )  
+    )  
+  )  
+  pt-list  
+)
+
+;; ======================================================
+;; FABRYKA: WSTAWIANIE PIKIET
+;; ======================================================
+
 (defun geocad-stworz-blok-pikieta ()  
   (if (not (tblsearch "BLOCK" "Pikieta_Geo"))  
     (progn  
@@ -12,27 +77,11 @@
     )  
   )  
   (princ)  
-)  
-
-;; --- 2. ZARZĄDZANIE PAMIĘCIĄ --- 
-(defun geocad-get-cfg (klucz domyslny / val) 
-  (setq val (vl-registry-read "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" klucz)) 
-  (if (not val) (progn (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" klucz domyslny) domyslny) val) 
-) 
-
-;; --- 3. INTELIGENTNY GENERATOR NUMERÓW (Osobna pamięć dla każdego przedrostka) ---
-(defun GP:PobierzNastepnyNumer ( / pref nr )
-  (setq pref (geocad-get-cfg "PiktPrefix" ""))
-  (setq nr (vlax-ldata-get "GeoLicznik" pref))
-  (if (not nr) (setq nr 1))
-  (vlax-ldata-put "GeoLicznik" pref (1+ nr))
-  (itoa nr)
 )
 
-;; --- 4. KOMBAJN WSTAWIAJĄCY --- 
 (defun geocad-wstaw-pikiete-full (doc space pt-list nr-str show-z / txt-h z-prec prefix kolor styl display pikt_pref pelny-nr px py pz z-str dX dY lay-obj lay-pt lay-nr lay-h pt-3d blkRef vis-nr vis-h) 
-   
-  ;; AUTO-NUMERACJA: Jeśli skrypt nie podał numeru (pusty ""), generujemy go!
+  
+  ;; AUTO-NUMERACJA: Jeśli pusty, prosimy licznik o nowy
   (if (or (not nr-str) (= nr-str ""))
     (setq nr-str (GP:PobierzNastepnyNumer))
   )
@@ -46,7 +95,6 @@
         pikt_pref (geocad-get-cfg "PiktPrefix" ""))
 
   (setq pelny-nr (strcat pikt_pref nr-str))
-
   (setq vis-nr (if (member display '("Oba" "Numer")) :vlax-false :vlax-true)) 
   (setq vis-h  (if (member display '("Oba" "Rzedna")) :vlax-false :vlax-true)) 
 
@@ -92,7 +140,10 @@
   (princ) 
 ) 
 
-;; --- 5. FUNKCJA SKANUJĄCA RYSUNEK --- 
+;; ======================================================
+;; SKANER I AKTUALIZATOR ISTNIEJĄCYCH PIKIET
+;; ======================================================
+
 (defun geocad-get-existing-prefixes ( / ss i obj lay pref lst) 
   (setq lst '()) 
   (setq ss (ssget "X" '((0 . "INSERT") (2 . "Pikieta_Geo")))) 
@@ -114,7 +165,6 @@
   lst 
 ) 
 
-;; --- 6. AKTUALIZATOR ISTNIEJĄCYCH --- 
 (defun geocad-update-existing (doc target_prefix kolor-str txt-h-str z-prec-str display / ss i ent obj pt px py pz lay-pt lay-nr lay-h lay-obj kolor txt-h z-prec dX dY vis-nr vis-h) 
   (setq kolor (atoi kolor-str) txt-h (atof txt-h-str) z-prec (atoi z-prec-str)) 
   (setq dX (* txt-h 1.2) dY (* txt-h 0.7)) 
@@ -167,14 +217,18 @@
   ) 
 ) 
 
-;; --- 7. GEO_SETUP --- 
-(defun c:GEO_SETUP ( / txt-h z-prec prefix pikt_pref kolor styl display dcl-file dcl-fn dcl-id status col-idx styl-idx disp-idx doc prefix_list target_idx target_prefix) 
+;; ======================================================
+;; INTERFEJS: GEO_SETUP
+;; ======================================================
+
+(defun c:GEO_SETUP ( / txt-h z-prec prefix pikt_pref z_tags kolor styl display dcl-file dcl-fn dcl-id status col-idx styl-idx disp-idx doc prefix_list target_idx target_prefix) 
    
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object))) 
   (setq txt-h (geocad-get-cfg "TxtH" "1.0") 
         z-prec (geocad-get-cfg "Prec" "2") 
         prefix (geocad-get-cfg "Prefix" "POMIAR") 
         pikt_pref (geocad-get-cfg "PiktPrefix" "") 
+        z_tags (geocad-get-cfg "ZTags" "H, Z, RZEDNA")
         kolor (geocad-get-cfg "Color" "3") 
         styl (geocad-get-cfg "Styl" "Blok") 
         display (geocad-get-cfg "Display" "Oba")) 
@@ -191,6 +245,7 @@
   (write-line "    : edit_box { key = \"z_prec\"; label = \"Miejsca po przecinku (Z):\"; edit_width = 8; }" dcl-fn) 
   (write-line "    : edit_box { key = \"prefix\"; label = \"Przedrostek WARSTWY (np. POMIAR):\"; edit_width = 20; }" dcl-fn) 
   (write-line "    : edit_box { key = \"pikt_pref\"; label = \"Przedrostek NUMERU (np. woda_):\"; edit_width = 20; }" dcl-fn) 
+  (write-line "    : edit_box { key = \"z_tags\"; label = \"Tagi rzednych (np. H, Z, WYS):\"; edit_width = 20; }" dcl-fn)
   (write-line "    : popup_list { key = \"kolor\"; label = \"Kolor podstawowy:\"; list = \"1 - Czerwony\\n2 - Zolty\\n3 - Zielony\\n4 - Cyjan\\n5 - Niebieski\\n6 - Magenta\\n7 - Czarny/Bialy\"; }" dcl-fn) 
   (write-line "  }" dcl-fn) 
    
@@ -207,13 +262,14 @@
 
   (start_list "exist_layers") (mapcar 'add_list prefix_list) (end_list) 
 
-  (set_tile "txt_h" txt-h) (set_tile "z_prec" z-prec) (set_tile "prefix" prefix) (set_tile "pikt_pref" pikt_pref)
+  (set_tile "txt_h" txt-h) (set_tile "z_prec" z-prec) (set_tile "prefix" prefix) 
+  (set_tile "pikt_pref" pikt_pref) (set_tile "z_tags" z_tags)
   (setq col-idx (atoi kolor)) (if (and (>= col-idx 1) (<= col-idx 7)) (set_tile "kolor" (itoa (1- col-idx))) (set_tile "kolor" "2")) 
   (if (= styl "Tekst") (set_tile "styl_rys" "1") (set_tile "styl_rys" "0")) 
   (cond ((= display "Oba") (set_tile "display_mode" "0")) ((= display "Numer") (set_tile "display_mode" "1")) ((= display "Rzedna") (set_tile "display_mode" "2")) ((= display "Brak") (set_tile "display_mode" "3"))) 
 
-  (action_tile "btn_update" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\") target_idx (atoi (get_tile \"exist_layers\"))) (done_dialog 2)") 
-  (action_tile "accept" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)") 
+  (action_tile "btn_update" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\") target_idx (atoi (get_tile \"exist_layers\"))) (done_dialog 2)") 
+  (action_tile "accept" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)") 
   (action_tile "cancel" "(done_dialog 0)") 
 
   (setq status (start_dialog)) (unload_dialog dcl-id) (vl-file-delete dcl-file) 
@@ -229,6 +285,7 @@
       (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Prec" z-prec) 
       (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Prefix" prefix) 
       (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "PiktPrefix" pikt_pref) 
+      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "ZTags" z_tags) 
       (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Color" kolor) 
        
       (if (= status 1) (princ "\n[OK] Zapisano standard dla nowych pikiet.")) 
@@ -244,5 +301,6 @@
   ) 
   (princ) 
 ) 
+
 (princ "\nZaladowano biblioteke: gp_Core.lsp. Wpisz GEO_SETUP aby skonfigurowac.")  
 (princ)
