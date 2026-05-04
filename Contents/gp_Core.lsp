@@ -27,10 +27,40 @@
 ;; MÓZG: GENERATOR NUMERACJI I RADAR
 ;; ======================================================
 
-(defun GP:PobierzNastepnyNumer ( / pref nr )
+(defun GP:PobierzNastepnyNumer ( / pref nr max-draw ss i obj att-val)
   (setq pref (geocad-get-cfg "PiktPrefix" ""))
+  
+  ;; 1. Pobierz numer z pamięci LDATA
   (setq nr (vlax-ldata-get "GeoLicznik" pref))
   (if (not nr) (setq nr 1))
+
+  ;; 2. SZYBKI SKAN RYSUNKU: Szukamy najwyższego istniejącego numeru z tym przedrostkiem
+  (setq max-draw 0)
+  (if (setq ss (ssget "_X" (list '(0 . "INSERT") '(2 . "Pikieta_Geo"))))
+    (repeat (setq i (sslength ss))
+      (setq obj (vlax-ename->vla-object (ssname ss (setq i (1- i)))))
+      (foreach att (vlax-invoke obj 'GetAttributes)
+        (if (= (vla-get-TagString att) "NR")
+          (progn
+            (setq att-val (vla-get-TextString att))
+            ;; Jeśli numer zawiera nasz przedrostek, wycinamy go i sprawdzamy cyfrę
+            (if (vl-string-search pref att-val)
+              (setq max-draw (max max-draw (atoi (vl-string-subst "" pref att-val))))
+            )
+          )
+        )
+      )
+    )
+  )
+
+  ;; 3. Synchronizacja: weź większą wartość
+  (if (> (1+ max-draw) nr) 
+      (setq nr (1+ max-draw))
+      ;; opcjonalnie: jeśli chcesz automatycznie "cofać" licznik po usunięciu:
+      (if (< (1+ max-draw) nr) (setq nr (1+ max-draw)))
+  )
+
+  ;; 4. Zapis i zwrot
   (vlax-ldata-put "GeoLicznik" pref (1+ nr))
   (itoa nr)
 )
