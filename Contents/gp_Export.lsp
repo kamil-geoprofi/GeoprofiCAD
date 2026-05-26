@@ -67,6 +67,11 @@
   (cond   
     ((member type '("AcDbPoint" "AcDbBlockReference"))   
      (setq res (list (vlax-safearray->list (vlax-variant-value (vla-get-InsertionPoint obj))))))   
+
+    ;; OKRĄG - eksportowany jest wyłącznie środek okręgu
+    ((= type "AcDbCircle")
+     (setq res (list (vlax-safearray->list (vlax-variant-value (vla-get-Center obj))))))
+
     ((member type '("AcDbLine" "AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline" "AcDbArc"))  
      (cond  
        ((= type "AcDbArc")   
@@ -105,17 +110,18 @@
 ;; --- GŁÓWNA KOMENDA EKSPORTU ---  
 ;; ==========================================  
   
-(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id)   
+(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id)   
       
   (setq old-err *error* *error* geocad-exp-err f nil)   
     
-  (setq ss (ssget '((0 . "POINT,INSERT,TEXT,MTEXT,LINE,LWPOLYLINE,POLYLINE,SOLID,ARC"))))   
+  ;; Dodano CIRCLE do filtra wyboru
+  (setq ss (ssget '((0 . "POINT,INSERT,TEXT,MTEXT,LINE,LWPOLYLINE,POLYLINE,SOLID,ARC,CIRCLE"))))   
   (if (not ss) (exit))   
   
   (princ "\nAnaliza geometrii... prosze czekac.")  
   
   ;; 1. GROMADZENIE DANYCH  
-  (setq i 0 c-pts 0 c-blks 0 c-lines 0 c-arcs 0 c-solids 0 c-txt-z 0 c-txt-id 0)  
+  (setq i 0 c-pts 0 c-blks 0 c-lines 0 c-arcs 0 c-circles 0 c-solids 0 c-txt-z 0 c-txt-id 0)  
   (setq pts-data '() txt-list '() found-tags '())  
   
   (while (< i (sslength ss))   
@@ -133,6 +139,12 @@
            (setq t-val (vla-get-TextString obj) cat (categorize-text t-val))  
            (if (= cat "Z") (setq c-txt-z (1+ c-txt-z)) (setq c-txt-id (1+ c-txt-id)))  
            (setq txt-list (cons (list (vlax-safearray->list minPt) (vlax-safearray->list maxPt) t-val cat) txt-list)))))   
+
+      ;; OKRĄG - do analizy trafia środek okręgu
+      ((= type "AcDbCircle")
+       (setq c-circles (1+ c-circles))
+       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data)))
+
       ((= type "AcDbSolid")   
        (setq c-solids (1+ c-solids))   
        (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data)))   
@@ -191,6 +203,10 @@
   (if (> (+ c-pts c-blks) 0) (write-line (strcat "    : text { label = \"- Punkty/Bloki: " (itoa (+ c-pts c-blks)) "\"; }") dcl-fn))   
   (if (> c-lines 0) (write-line (strcat "    : text { label = \"- Linie: " (itoa c-lines) "\"; }") dcl-fn))   
   (if (> c-arcs 0) (write-line (strcat "    : text { label = \"- Luki: " (itoa c-arcs) "\"; }") dcl-fn))   
+
+  ;; Raport liczby okręgów
+  (if (> c-circles 0) (write-line (strcat "    : text { label = \"- Okregi: " (itoa c-circles) "\"; }") dcl-fn))   
+
   (if (> c-solids 0) (write-line (strcat "    : text { label = \"- Bryly SOLID: " (itoa c-solids) "\"; }") dcl-fn))   
   (write-line "  }" dcl-fn)   
     
@@ -256,6 +272,10 @@
     (setq ent (ssname ss i) obj (vlax-ename->vla-object ent) type (vla-get-ObjectName obj))  
     (cond  
       ((member type '("AcDbPoint" "AcDbBlockReference")) (setq final-pts (cons (list (car (extract-v22 obj "1")) obj) final-pts)))  
+
+      ;; OKRĄG - finalnie eksportowany jest tylko środek
+      ((= type "AcDbCircle") (setq final-pts (cons (list (car (extract-v22 obj "1")) obj) final-pts)))
+
       ((= type "AcDbSolid") (foreach p (extract-v22 obj solid_mode) (setq final-pts (cons (list p obj) final-pts))))  
       ((member type '("AcDbLine" "AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline" "AcDbArc"))  
        (foreach p (extract-v22 obj "1") (setq final-pts (cons (list p obj) final-pts))))  
