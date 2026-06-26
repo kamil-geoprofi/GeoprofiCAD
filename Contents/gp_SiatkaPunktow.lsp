@@ -248,9 +248,9 @@
 )
 
 
-(defun geocad-grid-insert-unique (doc space pt zval seen next-nr cnt / p key)
+(defun geocad-grid-insert-unique (space pt zval seen batch cnt / p key)
   ;; Wstawia pikiete tylko raz dla danego XY.
-  ;; Numeracje pobieramy raz, potem zwiekszamy lokalnie.
+  ;; Numeracja jest obslugiwana przez geocad-pikieta-batch-insert.
   (setq p (list (car pt) (cadr pt) zval))
   (setq key (geocad-grid-key p))
 
@@ -258,18 +258,21 @@
     (progn
       (setq seen (cons key seen))
 
-      (if (not next-nr)
-        (setq next-nr (atoi (GP:PobierzNastepnyNumer)))
+      (setq batch
+        (geocad-pikieta-batch-insert
+          batch
+          space
+          p
+          nil
+          T
+        )
       )
 
-      (geocad-wstaw-pikiete-full doc space p (itoa next-nr) T)
-
-      (setq next-nr (1+ next-nr))
       (setq cnt (1+ cnt))
     )
   )
 
-  (list seen next-nr cnt)
+  (list seen batch cnt)
 )
 
 
@@ -288,22 +291,33 @@
     basept basept-wcs basex basey
     x y start-x start-y
     pt res
-    seen next-nr cnt cnt-corners cnt-border cnt-inside
+    seen batch cnt cnt-corners cnt-border cnt-inside
     ncols nrows est answer
     d p
-    prefix
   )
 
   (setq olderr *error*)
 
   (defun *error* (msg)
+    ;; Jezeli przerwano po wstawieniu czesci pikiet,
+    ;; zapisujemy finalny licznik z batcha.
+    (if batch
+      (progn
+        (setq batch (geocad-pikieta-batch-end batch))
+        (setq batch nil)
+      )
+    )
+
     (if doc
       (vl-catch-all-apply 'vla-EndUndoMark (list doc))
     )
+
     (setq *error* olderr)
+
     (if msg
       (princ (strcat "\nPrzerwano: " msg))
     )
+
     (princ)
   )
 
@@ -499,13 +513,18 @@
   ;; 11. Generowanie punktow
   ;; ------------------------------------------------------
   (setq seen '())
-  (setq next-nr nil)
+  (setq batch nil)
   (setq cnt 0)
   (setq cnt-corners 0)
   (setq cnt-border 0)
   (setq cnt-inside 0)
 
   (vla-StartUndoMark doc)
+
+  ;; Sesja masowego wstawiania pikiet.
+  ;; Context, warstwy i konfiguracja sa przygotowane raz.
+  ;; Numer automatyczny jest pobierany leniwie przy pierwszym insercie.
+  (setq batch (geocad-pikieta-batch-start doc))
 
   ;; ------------------------------------------------------
   ;; 11A. Punkty w naroznikach / zalamaniach
@@ -517,14 +536,14 @@
       (setq breakpoints (geocad-grid-get-breakpoints obj))
 
       (foreach bp breakpoints
-        (setq res (geocad-grid-insert-unique doc space bp zval seen next-nr cnt))
+        (setq res (geocad-grid-insert-unique space bp zval seen batch cnt))
 
         (if (> (caddr res) cnt)
           (setq cnt-corners (1+ cnt-corners))
         )
 
         (setq seen (car res))
-        (setq next-nr (cadr res))
+        (setq batch (cadr res))
         (setq cnt (caddr res))
       )
     )
@@ -542,14 +561,14 @@
 
     (if p
       (progn
-        (setq res (geocad-grid-insert-unique doc space p zval seen next-nr cnt))
+        (setq res (geocad-grid-insert-unique space p zval seen batch cnt))
 
         (if (> (caddr res) cnt)
           (setq cnt-border (1+ cnt-border))
         )
 
         (setq seen (car res))
-        (setq next-nr (cadr res))
+        (setq batch (cadr res))
         (setq cnt (caddr res))
       )
     )
@@ -572,14 +591,14 @@
 
       (if (geocad-grid-inside-p obj space pt minx miny maxx maxy test-z)
         (progn
-          (setq res (geocad-grid-insert-unique doc space pt zval seen next-nr cnt))
+          (setq res (geocad-grid-insert-unique space pt zval seen batch cnt))
 
           (if (> (caddr res) cnt)
             (setq cnt-inside (1+ cnt-inside))
           )
 
           (setq seen (car res))
-          (setq next-nr (cadr res))
+          (setq batch (cadr res))
           (setq cnt (caddr res))
         )
       )
@@ -593,10 +612,11 @@
   ;; ------------------------------------------------------
   ;; 12. Aktualizacja licznika GeoprofiCAD
   ;; ------------------------------------------------------
-  (if next-nr
+  ;; Batch zapisuje finalny licznik tylko wtedy, gdy faktycznie uzyto auto-numeracji.
+  (if batch
     (progn
-      (setq prefix (geocad-get-cfg "PiktPrefix" ""))
-      (vlax-ldata-put "GeoLicznik" prefix next-nr)
+      (setq batch (geocad-pikieta-batch-end batch))
+      (setq batch nil)
     )
   )
 
