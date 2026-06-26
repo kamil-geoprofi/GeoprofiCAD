@@ -22,7 +22,7 @@
         <ComponentEntry AppName="Geoprofi_Siatka" ModuleName="./Contents/gp_SiatkaPunktow.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_PomiarSpadku" ModuleName="./Contents/gp_PomiarSpadku.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_UsunPktMulti" ModuleName="./Contents/gp_UsunPunktyZMulti.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_UsunPktMulti" ModuleName="./Contents/gp_UsunPunktyZMulti.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_UsunPikietyZakres" ModuleName="./Contents/gp_UsunPikietyZakres.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_UI" ModuleName="./Contents/GeoprofiCAD.cuix" />
     </Components>
 </ApplicationPackage>
