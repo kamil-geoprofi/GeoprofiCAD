@@ -41,9 +41,46 @@
   (princ)   
 )   
 
-(defun get-native-windows-save-file ( / wsh tmpFile shellCmd f res )    
+(defun get-native-windows-save-file (out-format / wsh tmpFile shellCmd f res filter title default-ext )    
+  ;; Dialog zapisu dopasowany do wybranego formatu eksportu.
+  ;; TXT - klasyczny eksport pikiet z numerem.
+  ;; PTS - prosta chmura punktow z liczba punktow w pierwszej linii.
+  (if (= out-format "pts")
+    (progn
+      (setq filter "Chmura punktow PTS (*.pts)|*.pts|Pliki tekstowe (*.txt)|*.txt|Wszystkie pliki (*.*)|*.*")
+      (setq title "Zapisz chmure punktow PTS")
+      (setq default-ext "pts")
+    )
+
+    (progn
+      (setq filter "Pliki tekstowe (*.txt)|*.txt|Wszystkie pliki (*.*)|*.*")
+      (setq title "Zapisz pikiety TXT")
+      (setq default-ext "txt")
+    )
+  )
+
   (setq wsh (vlax-create-object "WScript.Shell") tmpFile (vl-filename-mktemp "file_res.txt"))    
-  (setq shellCmd (strcat "powershell.exe -WindowStyle Hidden -Command \"& {Add-Type -AssemblyName System.Windows.Forms;$d = New-Object System.Windows.Forms.SaveFileDialog;$d.Filter = 'Pliki tekstowe (*.txt)|*.txt';$d.Title = 'Zapisz pikiety';if($d.ShowDialog() -eq 'OK') { [System.IO.File]::WriteAllText('" (vl-string-translate "\\" "/" tmpFile) "', $d.FileName) }}\""))    
+  (setq shellCmd
+    (strcat
+      "powershell.exe -WindowStyle Hidden -Command \"& {"
+      "Add-Type -AssemblyName System.Windows.Forms;"
+      "$d = New-Object System.Windows.Forms.SaveFileDialog;"
+      "$d.Filter = '"
+      filter
+      "';"
+      "$d.DefaultExt = '"
+      default-ext
+      "';"
+      "$d.AddExtension = $true;"
+      "$d.Title = '"
+      title
+      "';"
+      "if($d.ShowDialog() -eq 'OK') { [System.IO.File]::WriteAllText('"
+      (vl-string-translate "\\" "/" tmpFile)
+      "', $d.FileName) }}"
+      "\""
+    )
+  )    
   (vlax-invoke-method wsh 'Run shellCmd 0 :vlax-true)   
   (if (findfile tmpFile) (progn (setq f (open tmpFile "r")) (setq res (read-line f)) (close f) (vl-file-delete tmpFile)))    
   res    
@@ -110,7 +147,7 @@
 ;; --- GŁÓWNA KOMENDA EKSPORTU ---  
 ;; ==========================================  
 
-(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id z_offset z_offset_str)   
+(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id z_offset z_offset_str export_format export-lines export-line)   
 
   (setq old-err *error* *error* geocad-exp-err f nil)   
 
@@ -246,7 +283,12 @@
   (write-line "    : row { : edit_box { key = \"t_r\"; label = \"Zasieg radaru tekstow [m]:\"; edit_width = 5; value = \"1.5\"; } : button { key = \"recalc\"; label = \"Odswiez Raport\"; } }" dcl-fn)   
   (write-line "  }" dcl-fn)   
 
-  ;; Offset Z dziala tylko na eksportowany plik TXT.
+  ;; Format eksportu:
+  ;; - TXT: zachowuje dotychczasowy eksport pikiet z numerem,
+  ;; - PTS: prosta chmura punktow bez numerow, z liczba punktow w pierwszej linii.
+  (write-line "  : boxed_radio_row { label = \"Format eksportu\"; key = \"out_fmt\"; : radio_button { key = \"txt\"; label = \"TXT pikiety\"; value=\"1\";} : radio_button { key = \"pts\"; label = \"PTS chmura punktow\"; } }" dcl-fn)
+
+  ;; Offset Z dziala tylko na eksportowany plik TXT/PTS.
   ;; Nie modyfikuje punktow, blokow ani tekstow w DWG.
   (write-line "  : boxed_column { label = \"Modyfikacja Z przy eksporcie\";" dcl-fn)
   (write-line "    : row { : edit_box { key = \"z_off\"; label = \"Offset Z [m]:\"; edit_width = 8; value = \"0.000\"; } }" dcl-fn)
@@ -261,7 +303,7 @@
   (run-analysis 1.5)  
 
   (action_tile "recalc" "(run-analysis (atof (get_tile \"t_r\")))")  
-  (action_tile "accept" "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\")) (done_dialog 1)")    
+  (action_tile "accept" "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\") export_format (get_tile \"out_fmt\")) (done_dialog 1)")    
 
   (setq status (start_dialog)) (unload_dialog dcl-id) (vl-file-delete dcl-file)    
   (if (= status 0) (exit))   
@@ -271,12 +313,16 @@
   (setq auto_start (atoi auto_start_str)) 
   (if (= auto_start 0) (setq auto_start 1)) 
 
+  (if (not export_format)
+    (setq export_format "txt")
+  )
+
   ;; Offset Z jest transformacja tylko na wyjsciu eksportu.
   ;; Wpisy przyjmujemy z kropka albo przecinkiem.
   (setq z_offset (distof (vl-string-translate "," "." z_offset_str)))
   (if (not z_offset) (setq z_offset 0.0))
 
-  (setq filename (get-native-windows-save-file)) (if (not filename) (exit))   
+  (setq filename (get-native-windows-save-file export_format)) (if (not filename) (exit))   
   (setq b-tags (mapcar 'strcase (parse-tags blk_tag)) z-tags (mapcar 'strcase (parse-tags z_tag)))   
 
   ;; 3. FINALNE WYCIĄGANIE  
@@ -297,7 +343,9 @@
   )  
 
   ;; 4. ZAPIS Z INTELIGENTNYM ROZWIĄZYWANIEM KONFLIKTÓW 
-  (setq f (open filename "w") count-exp 0 accepted-pts '() used-ids '())   
+  ;; Linie zbieramy najpierw w pamieci, bo format PTS wymaga liczby punktow
+  ;; w pierwszej linii pliku.
+  (setq count-exp 0 accepted-pts '() used-ids '() export-lines '())   
 
   (foreach item (reverse final-pts)   
     (setq pt (car item) obj (cadr item) x (car pt) y (cadr pt) z (caddr pt) nr "" f-z nil is-dupe nil)   
@@ -364,21 +412,52 @@
         ) 
         (setq used-ids (cons nr used-ids)) ; Zapisanie wykorzystanego numeru do pamięci 
 
-        (if (= geo_mode "geo")   
-            (write-line (strcat nr " " (format-coord y) " " (format-coord x) " " (format-coord z)) f)   
-            (write-line (strcat nr " " (format-coord x) " " (format-coord y) " " (format-coord z)) f))   
+        (if (= export_format "pts")
+          ;; PTS: prosta chmura punktow bez numeru.
+          ;; Kolejnosc wspolrzednych nadal respektuje wybor Geodezja/CAD.
+          (if (= geo_mode "geo")
+            (setq export-line (strcat (format-coord y) " " (format-coord x) " " (format-coord z)))
+            (setq export-line (strcat (format-coord x) " " (format-coord y) " " (format-coord z)))
+          )
+
+          ;; TXT: dotychczasowy eksport pikiet z numerem.
+          (if (= geo_mode "geo")
+            (setq export-line (strcat nr " " (format-coord y) " " (format-coord x) " " (format-coord z)))
+            (setq export-line (strcat nr " " (format-coord x) " " (format-coord y) " " (format-coord z)))
+          )
+        )
+
+        (setq export-lines (cons export-line export-lines))
         (setq count-exp (1+ count-exp))   
       )  
     )  
   )   
+
+  (setq export-lines (reverse export-lines))
+  (setq f (open filename "w"))
+
+  (if (= export_format "pts")
+    (write-line (itoa count-exp) f)
+  )
+
+  (foreach export-line export-lines
+    (write-line export-line f)
+  )
+
   (close f)   
   (setq f nil)  
   (alert
     (strcat
       "Sukces!\nZapisano: "
       (itoa count-exp)
-      " pikiet.\nUkład: "
+      (if (= export_format "pts")
+        " punktow PTS."
+        " pikiet TXT."
+      )
+      "\nUkład: "
       detected-sys
+      "\nFormat eksportu: "
+      (strcase export_format)
       "\nOffset Z eksportu: "
       (rtos z_offset 2 3)
       " m"
@@ -387,4 +466,4 @@
   (princ)   
 )   
 
-(princ "\nKomenda: EKSPORT_PIKIET") (princ)
+(princ "\nKomenda: EKSPORT_PIKIET_V22") (princ)
