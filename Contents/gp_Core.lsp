@@ -480,8 +480,18 @@
 ;; INTERFEJS: GEO_SETUP
 ;; ======================================================
 
-(defun c:GEO_SETUP ( / txt-h z-prec prefix pikt_pref z_tags kolor styl display dcl-file dcl-fn dcl-id status col-idx styl-idx disp-idx doc prefix_list target_idx target_prefix) 
-   
+(defun c:GEO_SETUP
+  (
+    /
+    txt-h z-prec prefix pikt_pref z_tags kolor styl display
+    dcl-file dcl-fn dcl-id status
+    col-idx styl-idx disp-idx
+    doc
+    prefix_groups
+    prefix_list target_idx target_prefix
+    prefix_select_list prefix_select_idx
+  )
+
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object))) 
   (setq txt-h (geocad-get-cfg "TxtH" "1.0") 
         z-prec (geocad-get-cfg "Prec" "2") 
@@ -497,14 +507,24 @@
   (if (= prefix "")
     (setq prefix "POMIAR")
   )
-  
-  (setq prefix_list (geocad-get-existing-prefixes))
-  
+
+  ;; Lista realnych grup z rysunku + aktualnie zapisany prefix.
+  (setq prefix_groups (geocad-get-existing-prefixes))
+
   ;; Aktualnie zapisany Prefix tez pokazujemy jako grupe,
   ;; nawet jezeli jeszcze nie ma dla niego warstw ani blokow.
-  (setq prefix_list (geocad-add-unique-string prefix prefix_list))
-  
-  (setq prefix_list (cons "--- WSZYSTKIE W RYSUNKU ---" prefix_list))
+  (setq prefix_groups (geocad-add-unique-string prefix prefix_groups))
+
+  ;; Lista do wyboru aktywnego prefixu dla nowych pikiet.
+  ;; Pierwsza pozycja zostawia mozliwosc recznego wpisania nowej grupy.
+  (setq prefix_select_list
+    (cons "--- wpisz recznie / nowa grupa ---" prefix_groups)
+  )
+
+  ;; Lista do aktualizacji istniejacych grup.
+  (setq prefix_list
+    (cons "--- WSZYSTKIE W RYSUNKU ---" prefix_groups)
+  )
 
   (setq dcl-file (vl-filename-mktemp "geosetup.dcl") dcl-fn (open dcl-file "w")) 
   (write-line "GeoSetup : dialog { label = \"Ustawienia Globalne Pikiet (Mozg)\";" dcl-fn) 
@@ -513,6 +533,7 @@
   (write-line "    : popup_list { key = \"display_mode\"; label = \"Widocznosc:\"; list = \"Oba (Nr + H)\\nTylko Numer\\nTylko Rzedna (H)\\nNic (Sam symbol)\"; }" dcl-fn) 
   (write-line "    : edit_box { key = \"txt_h\"; label = \"Wysokosc tekstu:\"; edit_width = 8; }" dcl-fn) 
   (write-line "    : edit_box { key = \"z_prec\"; label = \"Miejsca po przecinku (Z):\"; edit_width = 8; }" dcl-fn) 
+  (write-line "    : popup_list { key = \"prefix_select\"; label = \"Istniejaca grupa warstw:\"; }" dcl-fn)
   (write-line "    : edit_box { key = \"prefix\"; label = \"Przedrostek WARSTWY (np. POMIAR):\"; edit_width = 20; }" dcl-fn) 
   (write-line "    : edit_box { key = \"pikt_pref\"; label = \"Przedrostek NUMERU (np. woda_):\"; edit_width = 20; }" dcl-fn) 
   (write-line "    : edit_box { key = \"z_tags\"; label = \"Tagi rzednych (np. H, Z, WYS):\"; edit_width = 20; }" dcl-fn)
@@ -530,13 +551,62 @@
   (setq dcl-id (load_dialog dcl-file)) 
   (if (not (new_dialog "GeoSetup" dcl-id)) (progn (alert "Blad ladowania okna DCL.") (exit))) 
 
-  (start_list "exist_layers") (mapcar 'add_list prefix_list) (end_list) 
+  (start_list "prefix_select")
+  (mapcar 'add_list prefix_select_list)
+  (end_list)
 
-  (set_tile "txt_h" txt-h) (set_tile "z_prec" z-prec) (set_tile "prefix" prefix) 
-  (set_tile "pikt_pref" pikt_pref) (set_tile "z_tags" z_tags)
-  (setq col-idx (atoi kolor)) (if (and (>= col-idx 1) (<= col-idx 7)) (set_tile "kolor" (itoa (1- col-idx))) (set_tile "kolor" "2")) 
-  (if (= styl "Tekst") (set_tile "styl_rys" "1") (set_tile "styl_rys" "0")) 
-  (cond ((= display "Oba") (set_tile "display_mode" "0")) ((= display "Numer") (set_tile "display_mode" "1")) ((= display "Rzedna") (set_tile "display_mode" "2")) ((= display "Brak") (set_tile "display_mode" "3"))) 
+  (start_list "exist_layers")
+  (mapcar 'add_list prefix_list)
+  (end_list)
+
+  (set_tile "txt_h" txt-h)
+  (set_tile "z_prec" z-prec)
+  (set_tile "prefix" prefix)
+  (set_tile "pikt_pref" pikt_pref)
+  (set_tile "z_tags" z_tags)
+
+  ;; Ustaw popup wyboru grupy na aktualny Prefix.
+  ;; Jezeli Prefix nie istnieje na liscie, zostaje pozycja 0.
+  (setq prefix_select_idx 0)
+
+  (if (member prefix prefix_select_list)
+    (progn
+      (while
+        (and
+          (< prefix_select_idx (length prefix_select_list))
+          (/= (nth prefix_select_idx prefix_select_list) prefix)
+        )
+        (setq prefix_select_idx (1+ prefix_select_idx))
+      )
+    )
+  )
+
+  (set_tile "prefix_select" (itoa prefix_select_idx))
+
+  (setq col-idx (atoi kolor))
+  (if (and (>= col-idx 1) (<= col-idx 7))
+    (set_tile "kolor" (itoa (1- col-idx)))
+    (set_tile "kolor" "2")
+  )
+
+  (if (= styl "Tekst")
+    (set_tile "styl_rys" "1")
+    (set_tile "styl_rys" "0")
+  )
+
+  (cond
+    ((= display "Oba") (set_tile "display_mode" "0"))
+    ((= display "Numer") (set_tile "display_mode" "1"))
+    ((= display "Rzedna") (set_tile "display_mode" "2"))
+    ((= display "Brak") (set_tile "display_mode" "3"))
+  )
+
+  ;; Wybor z listy tylko uzupelnia pole Prefix.
+  ;; Reczne wpisywanie nowej grupy nadal zostaje mozliwe.
+  (action_tile
+    "prefix_select"
+    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (set_tile \"prefix\" (nth prefix_select_idx prefix_select_list)))"
+  )
 
   (action_tile "btn_update" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\") target_idx (atoi (get_tile \"exist_layers\"))) (done_dialog 2)") 
   (action_tile "accept" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)") 
@@ -577,7 +647,7 @@
     (princ "\n[Anulowano]") 
   ) 
   (princ) 
-) 
+)
 
 (princ "\nZaladowano biblioteke: gp_Core.lsp. Wpisz GEO_SETUP aby skonfigurowac.")  
 (princ)
