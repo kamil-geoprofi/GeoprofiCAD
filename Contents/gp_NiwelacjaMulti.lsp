@@ -1643,14 +1643,33 @@
 
   ;; Chroni przed przypadkowym kliknieciem tej samej pikiety dwa razy
   ;; i przed segmentem o zerowej dlugosci.
+  ;;
+  ;; W AutoLISP (last pts) zwraca ostatni ELEMENT listy, a nie ostatnia pare.
+  ;; Dla listy punktow:
+  ;; ((x1 y1 z1) (x2 y2 z2))
+  ;; dostajemy:
+  ;; (x2 y2 z2)
+  ;;
+  ;; Nie wolno tu robic dodatkowego (car prev), bo wtedy prev stalby sie sama
+  ;; wspolrzedna X i geocad-multi-distance-xy dostalby liczbe zamiast punktu.
   (if (not pts)
     T
 
     (progn
       (setq prev (last pts))
-      (setq prev (car prev))
 
-      (> (geocad-multi-distance-xy prev pt) 0.001)
+      (if
+        (and
+          (listp prev)
+          (listp pt)
+          (numberp (car prev))
+          (numberp (cadr prev))
+          (numberp (car pt))
+          (numberp (cadr pt))
+        )
+        (> (geocad-multi-distance-xy prev pt) 0.001)
+        nil
+      )
     )
   )
 )
