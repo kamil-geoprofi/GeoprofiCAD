@@ -121,15 +121,15 @@
           )  
         )  
             
-        (if is-orthogonal  
-          (progn  
-            (setq z-tgt (+ (caddr pt-src) (* dist2d (/ slope-pct 100.0))))   
-            (setq pt-list (list (car pt-tgt) (cadr pt-tgt) z-tgt))   
-
+        (if is-orthogonal
+          (progn
+            (setq z-tgt (+ (caddr pt-src) (* dist2d (/ slope-pct 100.0))))
+            (setq pt-list (list (car pt-tgt) (cadr pt-tgt) z-tgt))
+          
             (if (not batch)
               (setq batch (geocad-pikieta-batch-start doc))
             )
-
+          
             (setq batch
               (geocad-pikieta-batch-insert
                 batch
@@ -139,11 +139,11 @@
                 T
               )
             )
-
-          (setq zlicz (1+ zlicz))
-          (setq skipped-nr (1+ skipped-nr))  
-        )  
-      )   
+          
+            (setq zlicz (1+ zlicz))
+          )
+          (setq skipped-nr (1+ skipped-nr))
+           
     )   
   )   
       
@@ -153,7 +153,7 @@
     (setq batch nil)
   )
   )
-  
+
   (setq *error* old-err)    
   (princ (strcat "\nSukces! Wygenerowano " (itoa zlicz) " nowych pikiet."))  
   (if (> skipped-nr 0)   
