@@ -21,6 +21,9 @@
         <ComponentEntry AppName="Geoprofi_Niw_2Pkt" ModuleName="./Contents/gp_Niwelacja2Pkt.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Niw_Multi" ModuleName="./Contents/gp_NiwelacjaMulti.lsp" PerDocument="True" /> 
 
+        <ComponentEntry AppName="Geoprofi_Niw_Multi" ModuleName="./Contents/gp_NiwelacjaMulti.lsp" PerDocument="True" /> 
+        <ComponentEntry AppName="Geoprofi_Siatka" ModuleName="./Contents/gp_SiatkaPunktow.lsp" PerDocument="True" /> 
+        <ComponentEntry AppName="Geoprofi_PomiarSpadku" ModuleName="./Contents/gp_PomiarSpadku.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_UI" ModuleName="./Contents/GeoprofiCAD.cuix" />
     </Components>
 </ApplicationPackage>
