@@ -1560,11 +1560,343 @@
 )
 
 
+
+;; --- FUNKCJA POMOCNICZA: Czy punkt bazowy ma poprawna geometrie i Z ---
+(defun geocad-multi-valid-base-point-pt-p (pt)
+  (and
+    pt
+    (listp pt)
+    (numberp (car pt))
+    (numberp (cadr pt))
+    (numberp (caddr pt))
+    (/= (caddr pt) 0.0)
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Klasyfikacja pierwszego wyboru MULTI ---
+(defun geocad-multi-classify-first-selection
+  (
+    obj point-layer
+    /
+    supported-pt
+  )
+
+  ;; Zwraca:
+  ;; "Curve" - klasyczna os: linia / polilinia / luk itd.
+  ;; "Point" - pierwsza pikieta bazowa dla trybu osi z pikiet.
+  ;; nil     - obiekt nieobslugiwany.
+  ;;
+  ;; Najpierw sprawdzamy punkt bazowy, bo INSERT Pikieta_Geo nie jest krzywa.
+  (setq supported-pt (geocad-multi-supported-base-object-p obj point-layer))
+
+  (cond
+    (supported-pt
+      "Point"
+    )
+
+    ((geocad-multi-valid-curve-p obj)
+      "Curve"
+    )
+
+    (T
+      nil
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Pobranie poprawnego punktu bazowego z obiektu ---
+(defun geocad-multi-base-point-from-object
+  (
+    obj point-layer
+    /
+    pt
+  )
+
+  (if
+    (and
+      obj
+      (geocad-multi-supported-base-object-p obj point-layer)
+    )
+    (progn
+      (setq pt (geocad-multi-safe-get-pt-from-obj obj))
+
+      (if (geocad-multi-valid-base-point-pt-p pt)
+        pt
+        nil
+      )
+    )
+
+    nil
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Czy kolejny punkt osi z pikiet jest poprawnie oddalony ---
+(defun geocad-multi-point-far-enough-from-previous-p
+  (
+    pts pt
+    /
+    prev
+  )
+
+  ;; Chroni przed przypadkowym kliknieciem tej samej pikiety dwa razy
+  ;; i przed segmentem o zerowej dlugosci.
+  (if (not pts)
+    T
+
+    (progn
+      (setq prev (last pts))
+      (setq prev (car prev))
+
+      (> (geocad-multi-distance-xy prev pt) 0.001)
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Zebranie pikiet bazowych po kolei ---
+(defun geocad-multi-collect-ordered-base-points
+  (
+    firstObj point-layer
+    /
+    pts pt
+    ent obj-res obj
+    done
+  )
+
+  ;; Tryb bez narysowanej osi:
+  ;; uzytkownik wskazuje pikiety bazowe w kolejnosci przebiegu trasy.
+  ;; XY tych pikiet buduje tymczasowa os 2D, a Z zostaje rzedna wezla.
+  (setq pts '())
+
+  (setq pt
+    (geocad-multi-base-point-from-object firstObj point-layer)
+  )
+
+  (if pt
+    (setq pts (append pts (list pt)))
+  )
+
+  (princ
+    "\nTryb: os z kolejno wskazanych pikiet bazowych."
+  )
+
+  (princ
+    "\nWskazuj kolejne pikiety bazowe w kolejnosci przebiegu trasy. Enter = koniec wyboru."
+  )
+
+  (setq done nil)
+
+  (while (not done)
+    (setq ent
+      (car
+        (entsel "\nWskaz kolejna pikiete bazowa albo Enter = koniec: ")
+      )
+    )
+
+    (if (not ent)
+      (setq done T)
+
+      (progn
+        (setq obj-res
+          (vl-catch-all-apply
+            'vlax-ename->vla-object
+            (list ent)
+          )
+        )
+
+        (if
+          (or
+            (vl-catch-all-error-p obj-res)
+            (not obj-res)
+          )
+          (princ "\nPominieto: nie udalo sie odczytac obiektu.")
+
+          (progn
+            (setq obj obj-res)
+            (setq pt
+              (geocad-multi-base-point-from-object obj point-layer)
+            )
+
+            (cond
+              ((not pt)
+                (princ "\nPominieto: wskazany obiekt nie jest poprawna pikieta bazowa GeoprofiCAD z rzedna Z.")
+              )
+
+              ((not (geocad-multi-point-far-enough-from-previous-p pts pt))
+                (princ "\nPominieto: punkt jest zbyt blisko poprzedniego wezla.")
+              )
+
+              (T
+                (setq pts
+                  (append
+                    pts
+                    (list pt)
+                  )
+                )
+
+                (princ
+                  (strcat
+                    "\nDodano wezel "
+                    (itoa (length pts))
+                    "."
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  pts
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Lista punktow do tymczasowej LWPOLYLINE 2D ---
+(defun geocad-multi-points-to-lwpolyline-dxf (pts / dxf pt)
+  (setq dxf
+    (list
+      '(0 . "LWPOLYLINE")
+      '(100 . "AcDbEntity")
+      (cons 8 "0")
+      '(100 . "AcDbPolyline")
+      (cons 90 (length pts))
+      '(70 . 0)
+      '(38 . 0.0)
+      '(210 0.0 0.0 1.0)
+    )
+  )
+
+  (foreach pt pts
+    (setq dxf
+      (append
+        dxf
+        (list
+          (cons 10 (list (car pt) (cadr pt)))
+        )
+      )
+    )
+  )
+
+  dxf
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Utworzenie tymczasowej osi 2D z pikiet ---
+(defun geocad-multi-create-temp-axis-from-points
+  (
+    pts
+    /
+    en obj-res
+  )
+
+  ;; Tworzy tymczasowa otwarta LWPOLYLINE 2D po XY wskazanych pikiet.
+  ;; Nie zostaje w rysunku po zakonczeniu komendy.
+  (if (< (length pts) 2)
+    nil
+
+    (progn
+      (setq en
+        (entmakex
+          (geocad-multi-points-to-lwpolyline-dxf pts)
+        )
+      )
+
+      (if (not en)
+        nil
+
+        (progn
+          (setq obj-res
+            (vl-catch-all-apply
+              'vlax-ename->vla-object
+              (list en)
+            )
+          )
+
+          (if
+            (or
+              (vl-catch-all-error-p obj-res)
+              (not obj-res)
+              (not (geocad-multi-valid-curve-p obj-res))
+            )
+            (progn
+              (if obj-res
+                (vl-catch-all-apply 'vla-Delete (list obj-res))
+              )
+              nil
+            )
+
+            (progn
+              (vl-catch-all-apply 'vla-put-Visible (list obj-res :vlax-false))
+              obj-res
+            )
+          )
+        )
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Punkty wskazane po kolei do wezlow roboczych ---
+(defun geocad-multi-ordered-points-to-nodes
+  (
+    pts
+    /
+    nodes
+    prev pt
+    L
+  )
+
+  ;; Wezel roboczy:
+  ;; (pikietaz rzedna_Z odleglosc_XY_od_osi)
+  ;;
+  ;; Dla osi z pikiet gap = 0.0, bo sama os przechodzi przez wskazane pikiety.
+  (setq nodes '())
+  (setq prev nil)
+  (setq L 0.0)
+
+  (foreach pt pts
+    (if prev
+      (setq L
+        (+
+          L
+          (geocad-multi-distance-xy prev pt)
+        )
+      )
+    )
+
+    (setq nodes
+      (append
+        nodes
+        (list
+          (list
+            L
+            (caddr pt)
+            0.0
+          )
+        )
+      )
+    )
+
+    (setq prev pt)
+  )
+
+  nodes
+)
+
+
+
 (defun c:NIWELACJA_MULTI
   (
     /
     old-err old-osmode old-cmdecho old-clayer
     crvEnt crvObj flatCrvObj ss
+    first-mode axis-from-points ordered-base-points
     valid-nodes generation-nodes
     auto-valid-records auto-selected-records
     auto-result selected-result manual-result manual-records manual-selected-records
@@ -1627,8 +1959,15 @@
         )
   )
 
-  ;; --- 1. WYBOR OSI ---
-  (setq crvEnt (car (entsel "\n1. Wybierz os trasy (Linia/Polilinia/Luk): ")))
+  ;; --- 1. WYBOR OSI ALBO PIERWSZEJ PIKIETY BAZOWEJ ---
+  (setq point-layer (geocad-multi-get-current-point-layer))
+  (setq axis-from-points nil)
+
+  (setq crvEnt
+    (car
+      (entsel "\n1. Wybierz os trasy (Linia/Polilinia/Luk) albo pierwsza pikiete bazowa: ")
+    )
+  )
 
   (if (not crvEnt)
     (exit)
@@ -1645,45 +1984,112 @@
     (or
       (vl-catch-all-error-p crvObj)
       (not crvObj)
-      (not (geocad-multi-valid-curve-p crvObj))
     )
     (progn
-      (alert "Wybrany obiekt nie jest poprawna osia trasy. Wybierz linie, polilinie albo luk.")
+      (alert "Nie udalo sie odczytac wybranego obiektu.")
       (exit)
     )
   )
 
-  ;; Do obliczen NIWELACJA_MULTI uzywamy roboczej osi 2D.
-  ;; Oryginalny obiekt uzytkownika nie jest modyfikowany.
-  (setq flatCrvObj (geocad-multi-create-flat-curve-copy crvObj))
+  (setq first-mode
+    (geocad-multi-classify-first-selection crvObj point-layer)
+  )
 
-  (if (not flatCrvObj)
-    (progn
+  (cond
+    ((= first-mode "Curve")
+      ;; Klasyczny tryb: uzytkownik wskazal os liniowa.
+      ;; Do obliczen NIWELACJA_MULTI uzywamy roboczej osi 2D.
+      ;; Oryginalny obiekt uzytkownika nie jest modyfikowany.
+      (setq flatCrvObj (geocad-multi-create-flat-curve-copy crvObj))
+
+      (if (not flatCrvObj)
+        (progn
+          (alert
+            "Nie udalo sie utworzyc roboczej osi 2D. Wybierz linie, luk albo polilinie mozliwa do splaszczenia."
+          )
+          (exit)
+        )
+      )
+
+      ;; Od tego miejsca cala geometria pracuje na splaszczonej kopii XY.
+      (setq crvObj flatCrvObj)
+
+      (setq total-len (geocad-multi-curve-total-length crvObj))
+      (setq closed-curve (geocad-multi-closed-curve-p crvObj))
+
+      (princ "\nTryb: os z wybranego obiektu liniowego.")
+      (princ "\nUtworzono robocza os 2D XY do rzutowania i liczenia pikietazu.")
+
+      (if closed-curve
+        (princ "\nWykryto zamknieta os trasy - wlaczono obsluge przejscia przez poczatek/koniec polilinii.")
+      )
+    )
+
+    ((= first-mode "Point")
+      ;; Nowy tryb: uzytkownik nie rysuje osi.
+      ;; Kolejno wskazane pikiety bazowe buduja tymczasowa otwarta os 2D.
+      (setq axis-from-points T)
+      (setq point-mode "Pikiety")
+
+      (setq ordered-base-points
+        (geocad-multi-collect-ordered-base-points crvObj point-layer)
+      )
+
+      (if (< (length ordered-base-points) 2)
+        (progn
+          (alert "Tryb osi z pikiet wymaga przynajmniej 2 poprawnych pikiet bazowych.")
+          (exit)
+        )
+      )
+
+      (setq flatCrvObj
+        (geocad-multi-create-temp-axis-from-points ordered-base-points)
+      )
+
+      (if (not flatCrvObj)
+        (progn
+          (alert "Nie udalo sie utworzyc tymczasowej osi 2D z wybranych pikiet.")
+          (exit)
+        )
+      )
+
+      (setq crvObj flatCrvObj)
+      (setq valid-nodes
+        (geocad-multi-ordered-points-to-nodes ordered-base-points)
+      )
+
+      (setq total-len (geocad-multi-curve-total-length crvObj))
+      (setq closed-curve nil)
+      (setq omitted 0)
+      (setq selected-layer "Kolejnosc wskazanych pikiet")
+
+      (princ
+        (strcat
+          "\n>>> Tryb osi z pikiet: utworzono tymczasowa os 2D z "
+          (itoa (length ordered-base-points))
+          " wezlow."
+        )
+      )
+    )
+
+    (T
       (alert
-        "Nie udalo sie utworzyc roboczej osi 2D. Wybierz linie, luk albo polilinie mozliwa do splaszczenia."
+        "Wybrany obiekt nie jest ani poprawna osia trasy, ani pikieta bazowa GeoprofiCAD."
       )
       (exit)
     )
   )
 
-  ;; Od tego miejsca cala geometria pracuje na splaszczonej kopii XY.
-  (setq crvObj flatCrvObj)
-
-  (setq total-len (geocad-multi-curve-total-length crvObj))
-  (setq closed-curve (geocad-multi-closed-curve-p crvObj))
-
-  (princ "\nUtworzono robocza os 2D XY do rzutowania i liczenia pikietazu.")
-
-  (if closed-curve
-    (princ "\nWykryto zamknieta os trasy - wlaczono obsluge przejscia przez poczatek/koniec polilinii.")
-  )
-
 
   ;; --- 2. WYBOR / AUTOMATYCZNE WYKRYWANIE PUNKTOW BAZOWYCH ---
   (setq auto-tolerance 0.05)
-  (setq point-layer (geocad-multi-get-current-point-layer))
-  (setq selected-layer nil)
 
+  (if (not axis-from-points)
+    (setq selected-layer nil)
+  )
+
+  (if (not axis-from-points)
+    (progn
   (princ
     (strcat
       "\n2. Skanowanie punktow bazowych przy osi..."
@@ -1875,6 +2281,8 @@
     )
   )
 
+    )
+  )
 
   ;; --- 3. WERYFIKACJA I SORTOWANIE WEZLOW ---
   (if (< (length valid-nodes) 2)
@@ -2375,6 +2783,10 @@
       "\nOpcja pikiet w wezlach bazowych: "
       insert-base-nodes
       "."
+      (if axis-from-points
+        "\nTryb wejscia: os z kolejno wskazanych pikiet."
+        "\nTryb wejscia: os z obiektu liniowego."
+      )
     )
   )
 
