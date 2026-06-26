@@ -44,6 +44,22 @@
 )
 
 
+(defun geocad-grid-vla-object-p (val)
+  ;; Lokalny zamiennik dla vlax-objectp.
+  ;;
+  ;; W niektorych wersjach/srodowiskach AutoLISP symbol vlax-objectp
+  ;; nie jest dostepny, mimo ze obiekty VLA dzialaja po (vl-load-com).
+  ;;
+  ;; Nie definiujemy globalnie vlax-objectp, zeby nie ingerowac
+  ;; w srodowisko AutoCAD-a ani inne moduly.
+  (and
+    val
+    (not (vl-catch-all-error-p val))
+    (= (type val) 'VLA-OBJECT)
+  )
+)
+
+
 (defun geocad-grid-get-bbox (obj / minp maxp minl maxl)
   (vla-GetBoundingBox obj 'minp 'maxp)
   (setq minl (vlax-safearray->list minp))
@@ -327,7 +343,7 @@
       nil
     )
 
-    ((vlax-objectp res)
+    ((geocad-grid-vla-object-p res)
       (list res)
     )
 
@@ -363,7 +379,7 @@
 
 (defun geocad-grid-delete-objects (objs)
   (foreach o objs
-    (if (vlax-objectp o)
+    (if (geocad-grid-vla-object-p o)
       (vl-catch-all-apply 'vla-Delete (list o))
     )
   )
@@ -374,7 +390,7 @@
   (foreach o objs
     (if
       (and
-        (vlax-objectp o)
+        (geocad-grid-vla-object-p o)
         (not (eq o keep))
       )
       (vl-catch-all-apply 'vla-Delete (list o))
@@ -399,7 +415,7 @@
   (if
     (and
       candidate-obj
-      (vlax-objectp candidate-obj)
+      (geocad-grid-vla-object-p candidate-obj)
       (geocad-grid-closed-p candidate-obj)
       (setq len (geocad-grid-safe-curve-length candidate-obj))
     )
@@ -686,7 +702,7 @@
     (if
       (and
         inner-obj
-        (vlax-objectp inner-obj)
+        (geocad-grid-vla-object-p inner-obj)
         (not keep-inner-offset)
         (or (not cnt) (= cnt 0))
       )
@@ -994,7 +1010,7 @@
           (if
             (and
               inner-obj
-              (vlax-objectp inner-obj)
+              (geocad-grid-vla-object-p inner-obj)
               (not keep-inner-offset)
             )
             (vl-catch-all-apply 'vla-Delete (list inner-obj))

@@ -3,36 +3,49 @@
 
 
 ;; --- FUNKCJA POMOCNICZA: Bezpieczne pobieranie punktu z krzywej po pikietazu ---
-(defun get-safe-curve-pt (crv L / total-res total pt-res)
-  (setq total-res
+(defun get-safe-curve-pt (crv L / end-res total-res total pt-res)
+  (setq end-res
     (vl-catch-all-apply
-      'vlax-curve-getDistAtParam
-      (list crv (vlax-curve-getEndParam crv))
+      'vlax-curve-getEndParam
+      (list crv)
     )
   )
 
-  (if (or (vl-catch-all-error-p total-res) (not (numberp total-res)))
+  (if (or (vl-catch-all-error-p end-res) (not (numberp end-res)))
     nil
 
     (progn
-      (setq total total-res)
+      (setq total-res
+        (vl-catch-all-apply
+          'vlax-curve-getDistAtParam
+          (list crv end-res)
+        )
+      )
 
-      (if (and (numberp L) (>= L -0.001) (<= L (+ total 0.001)))
+      (if (or (vl-catch-all-error-p total-res) (not (numberp total-res)))
+        nil
+
         (progn
-          (setq pt-res
-            (vl-catch-all-apply
-              'vlax-curve-getPointAtDist
-              (list crv L)
-            )
-          )
+          (setq total total-res)
 
-          (if (vl-catch-all-error-p pt-res)
+          (if (and (numberp L) (>= L -0.001) (<= L (+ total 0.001)))
+            (progn
+              (setq pt-res
+                (vl-catch-all-apply
+                  'vlax-curve-getPointAtDist
+                  (list crv L)
+                )
+              )
+
+              (if (vl-catch-all-error-p pt-res)
+                nil
+                pt-res
+              )
+            )
+
             nil
-            pt-res
           )
         )
-
-        nil
       )
     )
   )
@@ -191,7 +204,6 @@
 
 
 ;; --- FUNKCJA POMOCNICZA: Czy obiekt moze byc wezlem bazowym MULTI ---
-;; --- FUNKCJA POMOCNICZA: Czy obiekt moze byc wezlem bazowym MULTI ---
 (defun geocad-multi-supported-base-object-p
   (
     obj point-layer
@@ -210,7 +222,8 @@
   ;;    a teksty NR/H sa tylko opisami obok.
   ;;
   ;; TEXT/MTEXT celowo NIE sa obslugiwane.
-
+  ;;
+  ;; point-layer zostaje w sygnaturze dla kompatybilnosci z wczesniejsza wersja helpera.
   (setq type
     (vl-catch-all-apply
       'vla-get-ObjectName
@@ -249,7 +262,7 @@
             (if
               (and
                 managed-prefix
-                (= 
+                (=
                   (strcase layer)
                   (strcase
                     (geocad-layer-name
@@ -505,22 +518,53 @@
 )
 
 
-;; --- FUNKCJA POMOCNICZA: Budowanie wezlow z selection set ---
-(defun geocad-multi-build-valid-nodes-from-ss
+;; --- FUNKCJA POMOCNICZA: Rekord wezla do starego formatu ---
+(defun geocad-multi-record-to-node (rec)
+  ;; Rekord automatu ma format:
+  ;; (pikietaz rzedna_Z warstwa)
+  ;;
+  ;; Stara logika generowania oczekuje:
+  ;; (pikietaz rzedna_Z)
+  (list (car rec) (cadr rec))
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Lista rekordow do starego formatu wezlow ---
+(defun geocad-multi-records-to-nodes (records / nodes)
+  (setq nodes '())
+
+  (foreach rec records
+    (setq nodes
+      (cons
+        (geocad-multi-record-to-node rec)
+        nodes
+      )
+    )
+  )
+
+  (reverse nodes)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Budowanie rekordow wezlow z selection set ---
+(defun geocad-multi-build-valid-node-records-from-ss
   (
     ss crvObj tolerance point-layer
     /
-    valid-nodes omitted
-    i en obj pt node gap
+    records omitted
+    i en obj pt node gap layer
   )
 
   ;; tolerance = nil    -> tryb reczny, bez filtrowania po odleglosci od osi.
   ;; tolerance = liczba -> tryb automat, tylko punkty w zadanej odleglosci XY od osi.
   ;;
-  ;; W obu trybach przyjmujemy tylko standardowe zrodla GeoprofiCAD:
-  ;; - INSERT bloku Pikieta_Geo na warstwie <Prefix>_PIKIETY,
-  ;; - POINT na warstwie <Prefix>_PIKIETY.
-  (setq valid-nodes '())
+  ;; Przyjmujemy tylko standardowe zrodla GeoprofiCAD:
+  ;; - INSERT bloku Pikieta_Geo niezaleznie od warstwy,
+  ;; - POINT na dowolnej zarzadzanej warstwie *_PIKIETY.
+  ;;
+  ;; Rekord ma format:
+  ;; (pikietaz rzedna_Z warstwa)
+  (setq records '())
   (setq omitted 0)
   (setq i 0)
 
@@ -568,13 +612,22 @@
                       (not tolerance)
                       (<= gap tolerance)
                     )
-                    (setq valid-nodes
-                      (cons
-                        (list
-                          (car node)
-                          (cadr node)
+                    (progn
+                      (setq layer (geocad-multi-get-object-layer obj))
+
+                      (if (not layer)
+                        (setq layer "<BRAK_WARSTWY>")
+                      )
+
+                      (setq records
+                        (cons
+                          (list
+                            (car node)
+                            (cadr node)
+                            layer
+                          )
+                          records
                         )
-                        valid-nodes
                       )
                     )
 
@@ -595,19 +648,262 @@
     )
   )
 
-  (list valid-nodes omitted)
+  (list records omitted)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Zgodnosc ze starsza wersja helpera ---
+(defun geocad-multi-build-valid-nodes-from-ss
+  (
+    ss crvObj tolerance point-layer
+    /
+    res records omitted
+  )
+
+  (setq res
+    (geocad-multi-build-valid-node-records-from-ss
+      ss
+      crvObj
+      tolerance
+      point-layer
+    )
+  )
+
+  (setq records (car res))
+  (setq omitted (cadr res))
+
+  (list
+    (geocad-multi-records-to-nodes records)
+    omitted
+  )
 )
 
 
 ;; --- FUNKCJA POMOCNICZA: Automatyczne skanowanie calego rysunku ---
-(defun geocad-multi-scan-auto-nodes (crvObj tolerance point-layer / ss)
+(defun geocad-multi-scan-auto-node-records (crvObj tolerance point-layer / ss)
   ;; Skanujemy tylko potencjalne zrodla GeoprofiCAD.
   ;; Dokladny filtr nazwy bloku i warstwy jest robiony pozniej,
   ;; bo ssget nie obsluzy wygodnie warunku:
-  ;; (INSERT Pikieta_Geo) albo (POINT na <Prefix>_PIKIETY).
+  ;; (INSERT Pikieta_Geo) albo (POINT na warstwie *_PIKIETY).
   (setq ss (ssget "X" '((0 . "INSERT,POINT"))))
 
-  (geocad-multi-build-valid-nodes-from-ss ss crvObj tolerance point-layer)
+  (geocad-multi-build-valid-node-records-from-ss ss crvObj tolerance point-layer)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Zgodnosc ze starsza nazwa helpera automatu ---
+(defun geocad-multi-scan-auto-nodes (crvObj tolerance point-layer / res records omitted)
+  (setq res
+    (geocad-multi-scan-auto-node-records
+      crvObj
+      tolerance
+      point-layer
+    )
+  )
+
+  (setq records (car res))
+  (setq omitted (cadr res))
+
+  (list
+    (geocad-multi-records-to-nodes records)
+    omitted
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Warstwa z rekordu wezla ---
+(defun geocad-multi-record-layer (rec)
+  (if (and rec (caddr rec))
+    (caddr rec)
+    "<BRAK_WARSTWY>"
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Unikalne warstwy z rekordow ---
+(defun geocad-multi-unique-record-layers (records / layers layer)
+  (setq layers '())
+
+  (foreach rec records
+    (setq layer (geocad-multi-record-layer rec))
+
+    (if (not (member layer layers))
+      (setq layers
+        (append
+          layers
+          (list layer)
+        )
+      )
+    )
+  )
+
+  layers
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Liczenie rekordow na warstwie ---
+(defun geocad-multi-count-records-on-layer (records layer / cnt rec-layer)
+  (setq cnt 0)
+
+  (foreach rec records
+    (setq rec-layer (geocad-multi-record-layer rec))
+
+    (if (= (strcase rec-layer) (strcase layer))
+      (setq cnt (1+ cnt))
+    )
+  )
+
+  cnt
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Filtrowanie rekordow po warstwie ---
+(defun geocad-multi-filter-records-by-layer (records layer / filtered rec-layer)
+  (setq filtered '())
+
+  (foreach rec records
+    (setq rec-layer (geocad-multi-record-layer rec))
+
+    (if (= (strcase rec-layer) (strcase layer))
+      (setq filtered
+        (cons
+          rec
+          filtered
+        )
+      )
+    )
+  )
+
+  (reverse filtered)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Wybor warstwy dla automatu ---
+(defun geocad-multi-select-auto-records-by-layer
+  (
+    records
+    /
+    layers total
+    idx layer count
+    choice selected-records selected-label
+  )
+
+  ;; Jezeli automat znalazl pikiety na kilku warstwach,
+  ;; uzytkownik moze wybrac konkretna warstwe albo wszystkie.
+  ;;
+  ;; Zwraca:
+  ;; (wybrane-rekordy opis-wyboru)
+  (setq total (length records))
+  (setq layers (geocad-multi-unique-record-layers records))
+
+  (cond
+    ((= total 0)
+      (list '() "Brak")
+    )
+
+    ((<= (length layers) 1)
+      (setq selected-label
+        (if layers
+          (car layers)
+          "Brak"
+        )
+      )
+
+      (princ
+        (strcat
+          "\nAutomat: wszystkie wykryte punkty sa na warstwie: "
+          selected-label
+          "."
+        )
+      )
+
+      (list records selected-label)
+    )
+
+    (T
+      (princ "\nWykryto pikiety bazowe na kilku warstwach:")
+      (princ
+        (strcat
+          "\n0. Wszystkie warstwy ("
+          (itoa total)
+          ")"
+        )
+      )
+
+      (setq idx 1)
+
+      (foreach layer layers
+        (setq count (geocad-multi-count-records-on-layer records layer))
+
+        (princ
+          (strcat
+            "\n"
+            (itoa idx)
+            ". "
+            layer
+            " ("
+            (itoa count)
+            ")"
+          )
+        )
+
+        (setq idx (1+ idx))
+      )
+
+      (setq choice nil)
+
+      (while (not choice)
+        (setq choice
+          (getint "\nWybierz warstwe pikiet do automatu <0 = Wszystkie>: ")
+        )
+
+        (if (not choice)
+          (setq choice 0)
+        )
+
+        (if
+          (not
+            (and
+              (numberp choice)
+              (>= choice 0)
+              (<= choice (length layers))
+            )
+          )
+          (progn
+            (princ "\nNiepoprawny wybor warstwy.")
+            (setq choice nil)
+          )
+        )
+      )
+
+      (if (= choice 0)
+        (progn
+          (setq selected-records records)
+          (setq selected-label "Wszystkie warstwy")
+        )
+
+        (progn
+          (setq layer (nth (1- choice) layers))
+          (setq selected-records
+            (geocad-multi-filter-records-by-layer records layer)
+          )
+          (setq selected-label layer)
+        )
+      )
+
+      (princ
+        (strcat
+          "\nWybor automatu: "
+          selected-label
+          " ("
+          (itoa (length selected-records))
+          " punktow)."
+        )
+      )
+
+      (list selected-records selected-label)
+    )
+  )
 )
 
 
@@ -616,10 +912,11 @@
     /
     old-err old-osmode old-cmdecho old-clayer
     crvEnt crvObj ss
-    valid-nodes auto-valid-nodes
-    auto-result manual-result
+    valid-nodes
+    auto-valid-records auto-selected-records
+    auto-result selected-result manual-result manual-records
     auto-omitted omitted
-    auto-tolerance tol-input point-mode point-layer
+    auto-tolerance tol-input point-mode point-layer selected-layer
     node1 node2 L1 Z1 L2 Z2 dL slope
     mode step num-pts segment-step L-cur segment-count effective-step k
     doc space pt-cur z-cur zlicz draw-3d poly-pts
@@ -698,25 +995,26 @@
   ;; --- 2. WYBOR / AUTOMATYCZNE WYKRYWANIE PUNKTOW BAZOWYCH ---
   (setq auto-tolerance 0.05)
   (setq point-layer (geocad-multi-get-current-point-layer))
+  (setq selected-layer nil)
 
   (princ
     (strcat
-    "\n2. Skanowanie punktow bazowych przy osi..."
-    "\nZrodla automatu: Pikieta_Geo oraz POINT na warstwach *_PIKIETY."
+      "\n2. Skanowanie punktow bazowych przy osi..."
+      "\nZrodla automatu: Pikieta_Geo oraz POINT na warstwach *_PIKIETY."
     )
   )
 
   (setq auto-result
-    (geocad-multi-scan-auto-nodes crvObj auto-tolerance point-layer)
+    (geocad-multi-scan-auto-node-records crvObj auto-tolerance point-layer)
   )
 
-  (setq auto-valid-nodes (car auto-result))
+  (setq auto-valid-records (car auto-result))
   (setq auto-omitted (cadr auto-result))
 
   (princ
     (strcat
       "\nAutomat: wykryto "
-      (itoa (length auto-valid-nodes))
+      (itoa (length auto-valid-records))
       " punktow bazowych na osi. Tolerancja: "
       (rtos auto-tolerance 2 3)
       " m."
@@ -759,16 +1057,17 @@
         )
 
         (setq auto-result
-          (geocad-multi-scan-auto-nodes crvObj auto-tolerance point-layer)
+          (geocad-multi-scan-auto-node-records crvObj auto-tolerance point-layer)
         )
 
-        (setq auto-valid-nodes (car auto-result))
+        (setq auto-valid-records (car auto-result))
         (setq auto-omitted (cadr auto-result))
+        (setq selected-layer nil)
 
         (princ
           (strcat
             "\nAutomat: wykryto "
-            (itoa (length auto-valid-nodes))
+            (itoa (length auto-valid-records))
             " punktow bazowych na osi. Tolerancja: "
             (rtos auto-tolerance 2 3)
             " m."
@@ -780,7 +1079,7 @@
       )
 
       ((= point-mode "Automat")
-        (if (< (length auto-valid-nodes) 2)
+        (if (< (length auto-valid-records) 2)
           (progn
             (alert
               "Automat znalazl mniej niz 2 poprawne punkty bazowe. Zmien tolerancje albo wybierz punkty recznie."
@@ -789,19 +1088,47 @@
           )
 
           (progn
-            (setq valid-nodes auto-valid-nodes)
-            (setq omitted auto-omitted)
+            (setq selected-result
+              (geocad-multi-select-auto-records-by-layer auto-valid-records)
+            )
+
+            (setq auto-selected-records (car selected-result))
+            (setq selected-layer (cadr selected-result))
+
+            (if (< (length auto-selected-records) 2)
+              (progn
+                (alert
+                  "Wybrana warstwa ma mniej niz 2 poprawne punkty bazowe. Wybierz wszystkie warstwy, zmien tolerancje albo wybierz punkty recznie."
+                )
+                (setq point-mode nil)
+              )
+
+              (progn
+                (setq valid-nodes
+                  (geocad-multi-records-to-nodes auto-selected-records)
+                )
+
+                ;; Pominiete = obiekty odrzucone podczas skanowania + poprawne punkty
+                ;; z warstw, ktorych uzytkownik nie wybral.
+                (setq omitted
+                  (+
+                    auto-omitted
+                    (- (length auto-valid-records) (length auto-selected-records))
+                  )
+                )
+              )
+            )
           )
         )
       )
 
       ((= point-mode "Recznie")
         (princ
-  (strcat
-    "\nZaznacz oknem pikiety bazowe."
-    "\nPrzyjmowane beda tylko: Pikieta_Geo oraz POINT na warstwach *_PIKIETY."
-  )
-)
+          (strcat
+            "\nZaznacz oknem pikiety bazowe."
+            "\nPrzyjmowane beda tylko: Pikieta_Geo oraz POINT na warstwach *_PIKIETY."
+          )
+        )
 
         (setq ss (ssget '((0 . "INSERT,POINT"))))
 
@@ -815,11 +1142,13 @@
             ;; Tryb reczny bez tolerancji, czyli nie odrzuca punktow po odleglosci
             ;; od osi, ale nadal przyjmuje tylko standardowe zrodla GeoprofiCAD.
             (setq manual-result
-              (geocad-multi-build-valid-nodes-from-ss ss crvObj nil point-layer)
+              (geocad-multi-build-valid-node-records-from-ss ss crvObj nil point-layer)
             )
 
-            (setq valid-nodes (car manual-result))
+            (setq manual-records (car manual-result))
+            (setq valid-nodes (geocad-multi-records-to-nodes manual-records))
             (setq omitted (cadr manual-result))
+            (setq selected-layer nil)
 
             (if (< (length valid-nodes) 2)
               (progn
@@ -863,6 +1192,16 @@
       " wezlow wzdluz trasy (Pominieto: "
       (itoa omitted)
       ")."
+    )
+  )
+
+  (if selected-layer
+    (princ
+      (strcat
+        "\n>>> Warstwy automatu: "
+        selected-layer
+        "."
+      )
     )
   )
 
@@ -971,7 +1310,7 @@
         (cond
 
           ;; ======================================================
-          ;; NOWY TRYB: Rowna
+          ;; TRYB: Rowna
           ;;
           ;; Podany odstep traktujemy jako odstep maksymalny/przyblizony.
           ;; Segment L1-L2 jest dzielony na rowne czesci.
@@ -1046,7 +1385,7 @@
 
 
           ;; ======================================================
-          ;; STARY TRYB: Odleglosc
+          ;; TRYB: Odleglosc
           ;;
           ;; Bez zmian.
           ;; Idzie sztywnym krokiem co "step".
@@ -1098,7 +1437,7 @@
 
 
           ;; ======================================================
-          ;; STARY TRYB: Podzial
+          ;; TRYB: Podzial
           ;;
           ;; Bez zmian.
           ;; Dzieli kazdy segment na podana liczbe odcinkow.
