@@ -93,20 +93,30 @@
     (defun geocad-managed-layer-prefix-from-name
       (layer-name / layer-up suffix suffix-up pos result)
       (setq result nil)
-
+    
       (if layer-name
         (progn
           (setq layer-up (strcase layer-name))
-
+    
           (foreach suffix *geocad-managed-layer-suffixes*
             (if (not result)
               (progn
                 (setq suffix-up (strcase suffix))
                 (setq pos (vl-string-search suffix-up layer-up))
-
+    
                 ;; pos jest 0-based.
-                ;; Dopuszczamy tylko sytuacje, gdzie przed sufiksem jest realny prefiks.
-                (if (and pos (> pos 0))
+                ;; Warstwa jest zarzadzana przez GeoprofiCAD tylko wtedy,
+                ;; gdy znany sufiks znajduje sie na KONCU nazwy warstwy.
+                ;;
+                ;; Np.:
+                ;; POMIAR_PIKIETY -> OK
+                ;; POMIAR_PIKIETY_ARCHIWUM -> NIE
+                (if
+                  (and
+                    pos
+                    (> pos 0)
+                    (= (+ pos (strlen suffix-up)) (strlen layer-up))
+                  )
                   (setq result (substr layer-name 1 pos))
                 )
               )
@@ -114,7 +124,7 @@
           )
         )
       )
-
+    
       result
     )
 

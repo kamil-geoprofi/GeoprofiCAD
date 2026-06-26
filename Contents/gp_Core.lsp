@@ -186,78 +186,217 @@
 ;; SKANER I AKTUALIZATOR ISTNIEJĄCYCH PIKIET
 ;; ======================================================
 
-(defun geocad-get-existing-prefixes ( / ss i obj lay pref lst) 
-  (setq lst '()) 
-  (setq ss (ssget "X" '((0 . "INSERT") (2 . "Pikieta_Geo")))) 
-  (if ss 
-    (progn 
-      (setq i 0) 
-      (while (< i (sslength ss)) 
-        (setq obj (vlax-ename->vla-object (ssname ss i))) 
-        (setq lay (vla-get-Layer obj)) 
-        (if (vl-string-search "_PIKIETY" lay) 
-          (setq pref (substr lay 1 (vl-string-search "_PIKIETY" lay))) 
-          (setq pref lay) 
-        ) 
-        (if (not (member pref lst)) (setq lst (append lst (list pref)))) 
-        (setq i (1+ i)) 
-      ) 
-    ) 
-  ) 
-  lst 
-) 
+(defun geocad-get-existing-prefixes ( / ss i obj lay pref lst layers lay-obj)
+  (setq lst '())
 
-(defun geocad-update-existing (doc target_prefix kolor-str txt-h-str z-prec-str display / ss i ent obj pt px py pz lay-pt lay-nr lay-h lay-obj kolor txt-h z-prec dX dY vis-nr vis-h) 
-  (setq kolor (atoi kolor-str) txt-h (atof txt-h-str) z-prec (atoi z-prec-str)) 
-  (setq dX (* txt-h 1.2) dY (* txt-h 0.7)) 
-   
-  (setq vis-nr (if (member display '("Oba" "Numer")) :vlax-false :vlax-true)) 
-  (setq vis-h  (if (member display '("Oba" "Rzedna")) :vlax-false :vlax-true)) 
+  ;; ------------------------------------------------------
+  ;; 1. Stara logika: skan blokow Pikieta_Geo.
+  ;; Zachowujemy to, bo aktualizator grup historycznie bazowal na blokach.
+  ;; ------------------------------------------------------
+  (setq ss (ssget "X" '((0 . "INSERT") (2 . "Pikieta_Geo"))))
 
-  (if (= target_prefix "--- WSZYSTKIE W RYSUNKU ---") 
-    (setq ss (ssget "X" '((0 . "INSERT") (2 . "Pikieta_Geo")))) 
-    (setq ss (ssget "X" (list '(0 . "INSERT") '(2 . "Pikieta_Geo") (cons 8 (strcat target_prefix "_PIKIETY"))))) 
-  ) 
+  (if ss
+    (progn
+      (setq i 0)
 
-  (if ss 
-    (progn 
-      (vla-StartUndoMark doc) 
-      (setq i 0 lay-obj (vla-get-Layers doc)) 
-      (while (< i (sslength ss)) 
-        (setq ent (ssname ss i) obj (vlax-ename->vla-object ent)) 
-        (setq pt (vlax-safearray->list (vlax-variant-value (vla-get-InsertionPoint obj)))) 
-        (setq px (car pt) py (cadr pt) pz (caddr pt)) 
-         
-        (setq lay-pt (vla-get-Layer obj)) 
-        (setq lay-nr (vl-string-subst "_ETYKIETA_NR" "_PIKIETY" lay-pt)) 
-        (setq lay-h (vl-string-subst "_ETYKIETA_H" "_PIKIETY" lay-pt)) 
+      (while (< i (sslength ss))
+        (setq obj (vlax-ename->vla-object (ssname ss i)))
+        (setq lay (vla-get-Layer obj))
 
-        (vla-put-color (vla-add lay-obj lay-pt) kolor) 
-        (vla-put-color (vla-add lay-obj lay-nr) kolor) 
-        (vla-put-color (vla-add lay-obj lay-h) kolor) 
+        (setq pref (geocad-managed-layer-prefix-from-name lay))
 
-        (foreach att (vlax-invoke obj 'GetAttributes) 
-          (vla-put-Height att txt-h) 
-          (cond 
-            ((= (vla-get-TagString att) "NR") 
-             (vla-put-InsertionPoint att (vlax-3d-point (list (+ px dX) (+ py dY) pz))) 
-             (vla-put-Invisible att vis-nr) 
-            ) 
-            ((member (vla-get-TagString att) '("H" "Z" "RZEDNA")) 
-             (vla-put-TextString att (rtos pz 2 z-prec)) 
-             (vla-put-InsertionPoint att (vlax-3d-point (list (+ px dX) (- py dY) pz))) 
-             (vla-put-Invisible att vis-h) 
-            ) 
-          ) 
-        ) 
-        (setq i (1+ i)) 
-      ) 
-      (vla-EndUndoMark doc) 
-      (princ (strcat "\n[SUKCES] Zaktualizowano " (itoa i) " pikiet dla grupy: " target_prefix)) 
-    ) 
-    (princ "\n[INFO] Nie znaleziono zadnych blokow do aktualizacji.") 
-  ) 
-) 
+        ;; Fallback dla starych / nietypowych rysunkow:
+        ;; jezeli blok Pikieta_Geo siedzi na warstwie bez standardowego sufiksu,
+        ;; zachowujemy stare zachowanie i traktujemy nazwe warstwy jako grupe.
+        (if (not pref)
+          (setq pref lay)
+        )
+
+        (setq lst (geocad-add-unique-string pref lst))
+        (setq i (1+ i))
+      )
+    )
+  )
+
+  ;; ------------------------------------------------------
+  ;; 2. Nowa logika: skan tabeli warstw.
+  ;; Dzieki temu lista wykryje tez grupy, ktore maja warstwy,
+  ;; ale aktualnie nie maja blokow Pikieta_Geo.
+  ;; ------------------------------------------------------
+  (setq layers (vla-get-Layers (vla-get-ActiveDocument (vlax-get-acad-object))))
+
+  (vlax-for lay-obj layers
+    (setq lay (vla-get-Name lay-obj))
+    (setq pref (geocad-managed-layer-prefix-from-name lay))
+
+    (if pref
+      (setq lst (geocad-add-unique-string pref lst))
+    )
+  )
+
+  (vl-sort lst '<)
+)
+
+(defun geocad-update-existing
+  (
+    doc target_prefix kolor-str txt-h-str z-prec-str display
+    /
+    ss i ent obj pt px py pz
+    lay-pt lay-nr lay-h lay-obj
+    kolor txt-h z-prec dX dY vis-nr vis-h
+    pref
+  )
+
+  (setq kolor (atoi kolor-str)
+        txt-h (atof txt-h-str)
+        z-prec (atoi z-prec-str)
+  )
+
+  (setq dX (* txt-h 1.2)
+        dY (* txt-h 0.7)
+  )
+
+  (setq vis-nr
+    (if (member display '("Oba" "Numer"))
+      :vlax-false
+      :vlax-true
+    )
+  )
+
+  (setq vis-h
+    (if (member display '("Oba" "Rzedna"))
+      :vlax-false
+      :vlax-true
+    )
+  )
+
+  ;; ------------------------------------------------------
+  ;; Wybór bloków do aktualizacji
+  ;; ------------------------------------------------------
+  (if (= target_prefix "--- WSZYSTKIE W RYSUNKU ---")
+    (setq ss
+      (ssget "X" '((0 . "INSERT") (2 . "Pikieta_Geo")))
+    )
+    (setq ss
+      (ssget
+        "X"
+        (list
+          '(0 . "INSERT")
+          '(2 . "Pikieta_Geo")
+          (cons
+            8
+            (geocad-layer-name target_prefix *geocad-layer-type-points*)
+          )
+        )
+      )
+    )
+  )
+
+  (if ss
+    (progn
+      (vla-StartUndoMark doc)
+
+      (setq i 0)
+      (setq lay-obj (vla-get-Layers doc))
+
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i))
+        (setq obj (vlax-ename->vla-object ent))
+
+        (setq pt
+          (vlax-safearray->list
+            (vlax-variant-value (vla-get-InsertionPoint obj))
+          )
+        )
+
+        (setq px (car pt)
+              py (cadr pt)
+              pz (caddr pt)
+        )
+
+        ;; ------------------------------------------------------
+        ;; Ustalenie grupy/prefiksu z aktualnej warstwy bloku.
+        ;; Dla standardowych warstw:
+        ;; POMIAR_PIKIETY -> POMIAR
+        ;; ------------------------------------------------------
+        (setq lay-pt (vla-get-Layer obj))
+        (setq pref (geocad-managed-layer-prefix-from-name lay-pt))
+
+        ;; Fallback:
+        ;; - przy aktualizacji konkretnej grupy uzywamy target_prefix,
+        ;; - przy "wszystkie" zostawiamy oryginalna warstwe punktu.
+        (if pref
+          (progn
+            (setq lay-pt (geocad-layer-name pref *geocad-layer-type-points*))
+            (setq lay-nr (geocad-layer-name pref *geocad-layer-type-label-nr*))
+            (setq lay-h  (geocad-layer-name pref *geocad-layer-type-label-h*))
+          )
+          (progn
+            (if (= target_prefix "--- WSZYSTKIE W RYSUNKU ---")
+              (progn
+                (setq lay-pt (vla-get-Layer obj))
+                (setq lay-nr lay-pt)
+                (setq lay-h lay-pt)
+              )
+              (progn
+                (setq lay-pt (geocad-layer-name target_prefix *geocad-layer-type-points*))
+                (setq lay-nr (geocad-layer-name target_prefix *geocad-layer-type-label-nr*))
+                (setq lay-h  (geocad-layer-name target_prefix *geocad-layer-type-label-h*))
+              )
+            )
+          )
+        )
+
+        ;; Upewniamy sie, ze warstwy istnieja i maja aktualny kolor.
+        (vla-put-color (vla-add lay-obj lay-pt) kolor)
+        (vla-put-color (vla-add lay-obj lay-nr) kolor)
+        (vla-put-color (vla-add lay-obj lay-h) kolor)
+
+        ;; Blok zostaje na warstwie punktow swojej grupy.
+        (vla-put-Layer obj lay-pt)
+
+        (foreach att (vlax-invoke obj 'GetAttributes)
+          (vla-put-Height att txt-h)
+
+          (cond
+            ((= (vla-get-TagString att) "NR")
+              (vla-put-InsertionPoint
+                att
+                (vlax-3d-point (list (+ px dX) (+ py dY) pz))
+              )
+              (vla-put-Invisible att vis-nr)
+              (vla-put-Layer att lay-nr)
+            )
+
+            ((member (vla-get-TagString att) '("H" "Z" "RZEDNA"))
+              (vla-put-TextString att (rtos pz 2 z-prec))
+              (vla-put-InsertionPoint
+                att
+                (vlax-3d-point (list (+ px dX) (- py dY) pz))
+              )
+              (vla-put-Invisible att vis-h)
+              (vla-put-Layer att lay-h)
+            )
+          )
+        )
+
+        (setq i (1+ i))
+      )
+
+      (vla-EndUndoMark doc)
+
+      (princ
+        (strcat
+          "\n[SUKCES] Zaktualizowano "
+          (itoa i)
+          " pikiet dla grupy: "
+          target_prefix
+        )
+      )
+    )
+    (princ "\n[INFO] Nie znaleziono zadnych blokow do aktualizacji.")
+  )
+)
 
 ;; ======================================================
 ;; INTERFEJS: GEO_SETUP
@@ -321,14 +460,21 @@
       (setq styl (if (= styl-idx "1") "Tekst" "Blok")) 
       (cond ((= disp-idx "0") (setq display "Oba")) ((= disp-idx "1") (setq display "Numer")) ((= disp-idx "2") (setq display "Rzedna")) ((= disp-idx "3") (setq display "Brak"))) 
        
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Styl" styl) 
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Display" display) 
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "TxtH" txt-h) 
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Prec" z-prec) 
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Prefix" prefix) 
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "PiktPrefix" pikt_pref) 
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "ZTags" z_tags) 
-      (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" "Color" kolor) 
+      (setq prefix (geocad-trim-string prefix))
+      (setq pikt_pref (geocad-trim-string pikt_pref))
+      
+      (if (= prefix "")
+        (setq prefix "POMIAR")
+      )
+      
+      (vl-registry-write *geocad-registry-path* "Styl" styl)
+      (vl-registry-write *geocad-registry-path* "Display" display)
+      (vl-registry-write *geocad-registry-path* "TxtH" txt-h)
+      (vl-registry-write *geocad-registry-path* "Prec" z-prec)
+      (vl-registry-write *geocad-registry-path* "Prefix" prefix)
+      (vl-registry-write *geocad-registry-path* "PiktPrefix" pikt_pref)
+      (vl-registry-write *geocad-registry-path* "ZTags" z_tags)
+      (vl-registry-write *geocad-registry-path* "Color" kolor)
        
       (if (= status 1) (princ "\n[OK] Zapisano standard dla nowych pikiet.")) 
        
