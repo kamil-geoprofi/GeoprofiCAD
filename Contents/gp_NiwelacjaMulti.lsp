@@ -985,14 +985,183 @@
 )
 
 
+
+;; --- FUNKCJA POMOCNICZA: Porownanie nazw warstw ---
+(defun geocad-multi-layer-equal-p (a b)
+  (and
+    a
+    b
+    (= (strcase a) (strcase b))
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Czy obiekt jest pikieta na warstwie wynikowej ---
+(defun geocad-multi-output-point-object-p
+  (
+    obj output-layer
+    /
+    type layer block-name
+  )
+
+  ;; Sprawdzamy tylko docelowa warstwe generowania pikiet.
+  ;; Pikiety bazowe na innych warstwach maja prawo zostac przepisane
+  ;; jako wynikowe pikiety na aktualna warstwe.
+  (setq layer (geocad-multi-get-object-layer obj))
+
+  (if (not (geocad-multi-layer-equal-p layer output-layer))
+    nil
+
+    (progn
+      (setq type
+        (vl-catch-all-apply
+          'vla-get-ObjectName
+          (list obj)
+        )
+      )
+
+      (if (vl-catch-all-error-p type)
+        nil
+
+        (cond
+          ((= type "AcDbPoint")
+            T
+          )
+
+          ((= type "AcDbBlockReference")
+            (setq block-name (geocad-multi-get-block-name obj))
+
+            (and
+              block-name
+              (= (strcase block-name) "PIKIETA_GEO")
+            )
+          )
+
+          (T
+            nil
+          )
+        )
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Porownanie punktow pikiet w tolerancji ---
+(defun geocad-multi-same-output-point-p
+  (
+    a b xy-tol z-tol
+  )
+
+  ;; Do blokady duplikatu wymagamy zgodnosci XY i Z.
+  ;; Nie blokujemy punktu o tym samym XY, ale innej wysokosci,
+  ;; bo to moglaby byc realna zmiana rzednej do wygenerowania.
+  (and
+    (geocad-multi-valid-base-point-pt-p a)
+    (geocad-multi-valid-base-point-pt-p b)
+    (<= (geocad-multi-distance-xy a b) xy-tol)
+    (<= (abs (- (caddr a) (caddr b))) z-tol)
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Czy pikieta wynikowa juz istnieje na warstwie docelowej ---
+(defun geocad-multi-existing-output-point-at-p
+  (
+    target-pt output-layer
+    /
+    ss i en obj-res obj
+    existing-pt
+    found
+    xy-tol z-tol
+  )
+
+  ;; Zwraca T, jezeli na aktualnej warstwie wynikowej istnieje juz:
+  ;; - INSERT bloku Pikieta_Geo albo POINT,
+  ;; - w tym samym XY,
+  ;; - z tym samym Z w malej tolerancji.
+  ;;
+  ;; Ten test jest celowo uzywany tylko dla pikiet-wezlow,
+  ;; zeby nie spowalniac generowania punktow posrednich.
+  (setq found nil)
+  (setq xy-tol 0.005)
+  (setq z-tol 0.005)
+
+  (if
+    (and
+      (geocad-multi-valid-base-point-pt-p target-pt)
+      output-layer
+    )
+    (progn
+      (setq ss
+        (ssget
+          "X"
+          (list
+            '(0 . "INSERT,POINT")
+            (cons 8 output-layer)
+          )
+        )
+      )
+
+      (if ss
+        (progn
+          (setq i 0)
+
+          (while
+            (and
+              (< i (sslength ss))
+              (not found)
+            )
+            (setq en (ssname ss i))
+
+            (setq obj-res
+              (vl-catch-all-apply
+                'vlax-ename->vla-object
+                (list en)
+              )
+            )
+
+            (if
+              (and
+                (not (vl-catch-all-error-p obj-res))
+                obj-res
+                (geocad-multi-output-point-object-p obj-res output-layer)
+              )
+              (progn
+                (setq existing-pt (geocad-multi-safe-get-pt-from-obj obj-res))
+
+                (if
+                  (geocad-multi-same-output-point-p
+                    target-pt
+                    existing-pt
+                    xy-tol
+                    z-tol
+                  )
+                  (setq found T)
+                )
+              )
+            )
+
+            (setq i (1+ i))
+          )
+        )
+      )
+    )
+  )
+
+  found
+)
+
+
+
 ;; --- FUNKCJA POMOCNICZA: Wstawienie pikiety-wezla ---
 (defun geocad-multi-insert-base-node-if-needed
   (
     node crvObj total-len closed-curve
     batch space
-    zlicz inserted-node-Ls insert-base-nodes
+    zlicz inserted-node-Ls insert-base-nodes output-layer
     /
-    L L-real Z pt-cur should-insert
+    L L-real Z pt-cur should-insert target-pt
   )
 
   ;; Zwraca:
@@ -1002,7 +1171,8 @@
   ;; - jezeli insert-base-nodes = "Tak", wstawiamy kazdy wezel bazowy,
   ;; - jezeli insert-base-nodes = "Nie", nadal wstawiamy wezly powstale
   ;;   z punktow odsunietych od osi, bo inaczej zniknelaby pikieta w miejscu rzutu XY,
-  ;; - inserted-node-Ls zabezpiecza przed dublowaniem wezlow wspolnych segmentow.
+  ;; - inserted-node-Ls zabezpiecza przed dublowaniem wezlow wspolnych segmentow,
+  ;; - jezeli pikieta juz istnieje na aktualnej warstwie wynikowej, nie wstawiamy duplikatu.
   ;;
   ;; Z punktu bazowego bierzemy Z, a XY pikiety wynikowej bierzemy z osi 2D.
   (setq L (car node))
@@ -1038,22 +1208,39 @@
 
           (if pt-cur
             (progn
-              (setq batch
-                (geocad-pikieta-batch-insert
-                  batch
-                  space
-                  (list
-                    (car pt-cur)
-                    (cadr pt-cur)
-                    Z
-                  )
-                  nil
-                  T
+              (setq target-pt
+                (list
+                  (car pt-cur)
+                  (cadr pt-cur)
+                  Z
                 )
               )
 
-              (setq zlicz (1+ zlicz))
-              (setq inserted-node-Ls (cons L-real inserted-node-Ls))
+              (if
+                (geocad-multi-existing-output-point-at-p
+                  target-pt
+                  output-layer
+                )
+                ;; Punkt wynikowy juz istnieje na aktualnej warstwie pikiet.
+                ;; Nie dublujemy go, ale oznaczamy L jako obsluzone,
+                ;; zeby wspolny wezel segmentow nie byl sprawdzany ponownie.
+                (setq inserted-node-Ls (cons L-real inserted-node-Ls))
+
+                (progn
+                  (setq batch
+                    (geocad-pikieta-batch-insert
+                      batch
+                      space
+                      target-pt
+                      nil
+                      T
+                    )
+                  )
+
+                  (setq zlicz (1+ zlicz))
+                  (setq inserted-node-Ls (cons L-real inserted-node-Ls))
+                )
+              )
             )
           )
         )
@@ -2481,6 +2668,7 @@
         zlicz
         inserted-node-Ls
         insert-base-nodes
+        point-layer
       )
     )
 
@@ -2699,6 +2887,7 @@
         zlicz
         inserted-node-Ls
         insert-base-nodes
+        point-layer
       )
     )
 
