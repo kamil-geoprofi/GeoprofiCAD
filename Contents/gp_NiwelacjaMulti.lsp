@@ -80,6 +80,7 @@
     mode step num-pts segment-step L-cur segment-count effective-step k
     doc space pt-cur z-cur zlicz draw-3d poly-pts omitted
     poly-layer
+    batch
   )
 
   ;; --- OBSLUGA BLEDOW ---
@@ -90,6 +91,15 @@
   (setq old-err *error*
         *error*
         (lambda (msg)
+          ;; Jezeli przerwano po wstawieniu czesci pikiet,
+          ;; zapisujemy finalny licznik z batcha.
+          (if batch
+            (progn
+              (setq batch (geocad-pikieta-batch-end batch))
+              (setq batch nil)
+            )
+          )
+
           (if old-osmode
             (setvar "OSMODE" old-osmode)
           )
@@ -271,6 +281,12 @@
   ;; --- 5. GENEROWANIE W PETLI DLA KAZDEGO SEGMENTU ---
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
   (setq space (vla-get-ModelSpace doc))
+
+  ;; Sesja masowego wstawiania pikiet.
+  ;; Context, warstwy i konfiguracja sa przygotowane raz.
+  ;; Numer automatyczny jest pobierany leniwie przy pierwszym insercie.
+  (setq batch (geocad-pikieta-batch-start doc))
+
   (setq zlicz 0)
   (setq poly-pts '())
 
@@ -357,16 +373,18 @@
 
               (if pt-cur
                 (progn
-                  (geocad-wstaw-pikiete-full
-                    doc
-                    space
-                    (list
-                      (car pt-cur)
-                      (cadr pt-cur)
-                      z-cur
+                  (setq batch
+                    (geocad-pikieta-batch-insert
+                      batch
+                      space
+                      (list
+                        (car pt-cur)
+                        (cadr pt-cur)
+                        z-cur
+                      )
+                      nil
+                      T
                     )
-                    ""
-                    T
                   )
 
                   (setq zlicz (1+ zlicz))
@@ -407,16 +425,18 @@
 
               (if pt-cur
                 (progn
-                  (geocad-wstaw-pikiete-full
-                    doc
-                    space
-                    (list
-                      (car pt-cur)
-                      (cadr pt-cur)
-                      z-cur
+                  (setq batch
+                    (geocad-pikieta-batch-insert
+                      batch
+                      space
+                      (list
+                        (car pt-cur)
+                        (cadr pt-cur)
+                        z-cur
+                      )
+                      nil
+                      T
                     )
-                    ""
-                    T
                   )
 
                   (setq zlicz (1+ zlicz))
@@ -459,16 +479,18 @@
 
                   (if pt-cur
                     (progn
-                      (geocad-wstaw-pikiete-full
-                        doc
-                        space
-                        (list
-                          (car pt-cur)
-                          (cadr pt-cur)
-                          z-cur
+                      (setq batch
+                        (geocad-pikieta-batch-insert
+                          batch
+                          space
+                          (list
+                            (car pt-cur)
+                            (cadr pt-cur)
+                            z-cur
+                          )
+                          nil
+                          T
                         )
-                        ""
-                        T
                       )
 
                       (setq zlicz (1+ zlicz))
@@ -517,6 +539,17 @@
     )
 
     (setq i (1+ i))
+  )
+
+
+  ;; Zapis finalnego licznika po wygenerowaniu pikiet.
+  ;; Robimy to przed 3DPOLY, zeby ewentualne przerwanie rysowania polilinii
+  ;; nie cofalo numeracji pikiet.
+  (if batch
+    (progn
+      (setq batch (geocad-pikieta-batch-end batch))
+      (setq batch nil)
+    )
   )
 
 
