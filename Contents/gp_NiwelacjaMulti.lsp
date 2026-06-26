@@ -985,30 +985,39 @@
 )
 
 
-;; --- FUNKCJA POMOCNICZA: Wstawienie pikiety-wezla tylko dla punktu odsunietego od osi ---
-(defun geocad-multi-insert-projected-node-if-needed
+;; --- FUNKCJA POMOCNICZA: Wstawienie pikiety-wezla ---
+(defun geocad-multi-insert-base-node-if-needed
   (
     node crvObj total-len closed-curve
     batch space
-    zlicz inserted-node-Ls
+    zlicz inserted-node-Ls insert-base-nodes
     /
-    L L-real Z pt-cur
+    L L-real Z pt-cur should-insert
   )
 
   ;; Zwraca:
   ;; (batch zlicz inserted-node-Ls)
   ;;
-  ;; Wstawiamy tylko wezly, ktore powstaly z punktow bazowych odsunietych od osi.
-  ;; Dzieki temu:
-  ;; - punkt lezacy juz na osi nie jest dublowany,
-  ;; - punkt spoza osi dostaje nowa pikiete dokladnie w miejscu rzutu XY,
-  ;; - Z zostaje z oryginalnej pikiety bazowej.
+  ;; Zasada:
+  ;; - jezeli insert-base-nodes = "Tak", wstawiamy kazdy wezel bazowy,
+  ;; - jezeli insert-base-nodes = "Nie", nadal wstawiamy wezly powstale
+  ;;   z punktow odsunietych od osi, bo inaczej zniknelaby pikieta w miejscu rzutu XY,
+  ;; - inserted-node-Ls zabezpiecza przed dublowaniem wezlow wspolnych segmentow.
+  ;;
+  ;; Z punktu bazowego bierzemy Z, a XY pikiety wynikowej bierzemy z osi 2D.
   (setq L (car node))
   (setq Z (cadr node))
 
+  (setq should-insert
+    (or
+      (= insert-base-nodes "Tak")
+      (geocad-multi-projected-node-p node)
+    )
+  )
+
   (if
     (and
-      (geocad-multi-projected-node-p node)
+      should-insert
       (numberp L)
       (numberp Z)
     )
@@ -1563,7 +1572,7 @@
     auto-tolerance tol-input point-mode point-layer selected-layer
     closed-curve total-len
     node1 node2 L1 Z1 L2 Z2 dL slope
-    node-insert-result inserted-node-Ls
+    node-insert-result inserted-node-Ls insert-base-nodes
     mode step num-pts segment-step L-cur segment-count effective-step k
     doc space pt-cur z-cur zlicz draw-3d poly-pts
     poly-layer
@@ -1972,6 +1981,16 @@
   )
 
 
+  (initget "Tak Nie")
+  (setq insert-base-nodes
+    (getkword "\nWstawic pikiety w wezlach bazowych? [Tak/Nie] <Tak>: ")
+  )
+
+  (if (not insert-base-nodes)
+    (setq insert-base-nodes "Tak")
+  )
+
+
   ;; --- 5. GENEROWANIE W PETLI DLA KAZDEGO SEGMENTU ---
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
   (setq space (vla-get-ModelSpace doc))
@@ -2019,11 +2038,13 @@
     (setq L2 (car node2))
     (setq Z2 (cadr node2))
 
-    ;; Jezeli wezel bazowy powstal z punktu odsunietego od osi,
-    ;; wstawiamy dodatkowa pikiete dokladnie w miejscu jego rzutu XY.
-    ;; Punkt lezacy juz na osi nie jest dublowany.
+    ;; Wstawienie pikiety-wezla.
+    ;; Domyslnie wstawiamy kazdy wezel bazowy, zeby nie bylo dziur
+    ;; w modelu w miejscach zalaman / punktow kontrolnych.
+    ;; Przy opcji Nie nadal wstawiane sa wezly powstale z rzutu punktow
+    ;; odsunietych od osi.
     (setq node-insert-result
-      (geocad-multi-insert-projected-node-if-needed
+      (geocad-multi-insert-base-node-if-needed
         node1
         crvObj
         total-len
@@ -2032,6 +2053,7 @@
         space
         zlicz
         inserted-node-Ls
+        insert-base-nodes
       )
     )
 
@@ -2070,7 +2092,7 @@
           ;; L1 + 12.72
           ;; L1 + 16.96
           ;;
-          ;; L1 i L2 sa wezlami bazowymi, wiec nie sa wstawiane jako nowe pikiety.
+          ;; L1 i L2 sa obslugiwane osobno jako pikiety-wezly, zgodnie z opcja uzytkownika.
           ;; ======================================================
           ((= mode "Rowna")
             (setq segment-count
@@ -2237,11 +2259,10 @@
     )
 
 
-    ;; Jezeli koncowy wezel segmentu powstal z punktu odsunietego od osi,
-    ;; rowniez dostaje wlasna pikiete w miejscu rzutu XY.
+    ;; Wstawienie koncowego wezla segmentu.
     ;; Lista inserted-node-Ls zabezpiecza przed dublowaniem wezlow wspolnych.
     (setq node-insert-result
-      (geocad-multi-insert-projected-node-if-needed
+      (geocad-multi-insert-base-node-if-needed
         node2
         crvObj
         total-len
@@ -2250,6 +2271,7 @@
         space
         zlicz
         inserted-node-Ls
+        insert-base-nodes
       )
     )
 
@@ -2350,7 +2372,9 @@
       "\nSukces! Wygenerowano "
       (itoa zlicz)
       " pikiet we wszystkich segmentach."
-      "\nUwzgledniono rowniez pikiety-wezly dla punktow bazowych odsunietych od osi."
+      "\nOpcja pikiet w wezlach bazowych: "
+      insert-base-nodes
+      "."
     )
   )
 
