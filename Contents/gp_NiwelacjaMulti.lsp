@@ -52,6 +52,227 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Dlugosc calej krzywej ---
+(defun geocad-multi-curve-total-length (crvObj / end-param-res total-res)
+  (setq end-param-res
+    (vl-catch-all-apply
+      'vlax-curve-getEndParam
+      (list crvObj)
+    )
+  )
+
+  (if (or (vl-catch-all-error-p end-param-res) (not (numberp end-param-res)))
+    nil
+
+    (progn
+      (setq total-res
+        (vl-catch-all-apply
+          'vlax-curve-getDistAtParam
+          (list crvObj end-param-res)
+        )
+      )
+
+      (if
+        (and
+          (not (vl-catch-all-error-p total-res))
+          (numberp total-res)
+          (> total-res 0.001)
+        )
+        total-res
+        nil
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Czy krzywa jest zamknieta ---
+(defun geocad-multi-closed-curve-p (crvObj / typ res sp ep)
+  (setq typ
+    (vl-catch-all-apply
+      'vla-get-ObjectName
+      (list crvObj)
+    )
+  )
+
+  (cond
+    ((and (not (vl-catch-all-error-p typ)) (member typ '("AcDbCircle" "AcDbEllipse")))
+      T
+    )
+
+    ((vlax-property-available-p crvObj 'Closed)
+      (setq res
+        (vl-catch-all-apply
+          'vla-get-Closed
+          (list crvObj)
+        )
+      )
+
+      (and
+        (not (vl-catch-all-error-p res))
+        (= res :vlax-true)
+      )
+    )
+
+    (T
+      (setq sp
+        (vl-catch-all-apply
+          'vlax-curve-getStartPoint
+          (list crvObj)
+        )
+      )
+
+      (setq ep
+        (vl-catch-all-apply
+          'vlax-curve-getEndPoint
+          (list crvObj)
+        )
+      )
+
+      (if
+        (and
+          sp
+          ep
+          (not (vl-catch-all-error-p sp))
+          (not (vl-catch-all-error-p ep))
+        )
+        (equal sp ep 0.001)
+        nil
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Normalizacja pikietazu na zamknietej krzywej ---
+(defun geocad-multi-normalize-L (L total-len / result)
+  ;; Dla zamknietej osi pozwala liczyc L poza zakresem 0-total,
+  ;; a potem zawija go z powrotem na krzywa.
+  ;;
+  ;; Np. total=100:
+  ;; L=103 -> 3
+  ;; L=-2  -> 98
+  (setq result L)
+
+  (if
+    (and
+      (numberp result)
+      (numberp total-len)
+      (> total-len 0.001)
+    )
+    (progn
+      (while (< result 0.0)
+        (setq result (+ result total-len))
+      )
+
+      (while (> result total-len)
+        (setq result (- result total-len))
+      )
+    )
+  )
+
+  result
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Pobranie punktu z krzywej z obsluga zawijania ---
+(defun get-safe-curve-pt-wrapped (crvObj L total-len closed-curve / L-real)
+  (if
+    (and
+      closed-curve
+      (numberp total-len)
+      (> total-len 0.001)
+    )
+    (setq L-real (geocad-multi-normalize-L L total-len))
+    (setq L-real L)
+  )
+
+  (get-safe-curve-pt crvObj L-real)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Budowanie listy wezlow do generowania ---
+(defun geocad-multi-build-generation-nodes
+  (
+    sorted-nodes closed-curve total-len point-mode
+    /
+    first-node
+    a b
+    L-a Z-a L-b Z-b
+    forward backward
+  )
+
+  ;; Wezel ma format:
+  ;; (pikietaz rzedna_Z)
+  ;;
+  ;; Dla otwartej krzywej zostaje stara logika:
+  ;; node0 -> node1 -> node2 ...
+  ;;
+  ;; Dla zamknietej krzywej:
+  ;; - automat / wiele wezlow: domykamy trase przez segment ostatni -> pierwszy,
+  ;; - recznie i dokladnie 2 wezly: wybieramy krotsza droge miedzy nimi.
+  ;;
+  ;; Jezeli segment przechodzi przez poczatek/koniec krzywej, drugi wezel
+  ;; dostaje techniczny pikietaz L + total-len. Dzieki temu interpolacja Z
+  ;; dalej liczy sie po prawdziwej dlugosci segmentu.
+  (cond
+    ((or
+       (not closed-curve)
+       (not total-len)
+       (<= total-len 0.001)
+       (< (length sorted-nodes) 2)
+     )
+      sorted-nodes
+    )
+
+    ((and (= point-mode "Recznie") (= (length sorted-nodes) 2))
+      (setq a (nth 0 sorted-nodes))
+      (setq b (nth 1 sorted-nodes))
+
+      (setq L-a (car a))
+      (setq Z-a (cadr a))
+      (setq L-b (car b))
+      (setq Z-b (cadr b))
+
+      ;; sorted-nodes jest posortowane, wiec L-b >= L-a.
+      (setq forward (- L-b L-a))
+      (setq backward (- total-len forward))
+
+      (if (<= forward backward)
+        ;; Krotsza droga bez przejscia przez zero.
+        (list
+          (list L-a Z-a)
+          (list L-b Z-b)
+        )
+
+        ;; Krotsza droga przez zamkniecie:
+        ;; idziemy od B do A + total.
+        (list
+          (list L-b Z-b)
+          (list (+ L-a total-len) Z-a)
+        )
+      )
+    )
+
+    (T
+      ;; Zamknieta krzywa i wiele wezlow:
+      ;; generujemy wszystkie segmenty dookola, lacznie z ostatni -> pierwszy.
+      (setq first-node (car sorted-nodes))
+
+      (append
+        sorted-nodes
+        (list
+          (list
+            (+ (car first-node) total-len)
+            (cadr first-node)
+          )
+        )
+      )
+    )
+  )
+)
+
+
 ;; --- FUNKCJA POMOCNICZA: Sprawdzenie, czy obiekt nadaje sie na os trasy ---
 (defun geocad-multi-valid-curve-p (crvObj / end-param-res dist-res)
   (setq end-param-res
@@ -520,10 +741,10 @@
 
 ;; --- FUNKCJA POMOCNICZA: Rekord wezla do starego formatu ---
 (defun geocad-multi-record-to-node (rec)
-  ;; Rekord automatu ma format:
+  ;; Rekord ma format:
   ;; (pikietaz rzedna_Z warstwa)
   ;;
-  ;; Stara logika generowania oczekuje:
+  ;; Logika generowania oczekuje:
   ;; (pikietaz rzedna_Z)
   (list (car rec) (cadr rec))
 )
@@ -778,17 +999,17 @@
 )
 
 
-;; --- FUNKCJA POMOCNICZA: Wybor warstwy dla automatu ---
-(defun geocad-multi-select-auto-records-by-layer
+;; --- FUNKCJA POMOCNICZA: Wybor warstwy z rekordow ---
+(defun geocad-multi-select-records-by-layer
   (
-    records
+    records source-label
     /
     layers total
     idx layer count
     choice selected-records selected-label
   )
 
-  ;; Jezeli automat znalazl pikiety na kilku warstwach,
+  ;; Jezeli znaleziono pikiety na kilku warstwach,
   ;; uzytkownik moze wybrac konkretna warstwe albo wszystkie.
   ;;
   ;; Zwraca:
@@ -811,7 +1032,9 @@
 
       (princ
         (strcat
-          "\nAutomat: wszystkie wykryte punkty sa na warstwie: "
+          "\n"
+          source-label
+          ": wszystkie wykryte punkty sa na warstwie: "
           selected-label
           "."
         )
@@ -821,7 +1044,14 @@
     )
 
     (T
-      (princ "\nWykryto pikiety bazowe na kilku warstwach:")
+      (princ
+        (strcat
+          "\n"
+          source-label
+          ": wykryto pikiety bazowe na kilku warstwach:"
+        )
+      )
+
       (princ
         (strcat
           "\n0. Wszystkie warstwy ("
@@ -854,7 +1084,7 @@
 
       (while (not choice)
         (setq choice
-          (getint "\nWybierz warstwe pikiet do automatu <0 = Wszystkie>: ")
+          (getint "\nWybierz warstwe pikiet <0 = Wszystkie>: ")
         )
 
         (if (not choice)
@@ -893,7 +1123,7 @@
 
       (princ
         (strcat
-          "\nWybor automatu: "
+          "\nWybor warstwy: "
           selected-label
           " ("
           (itoa (length selected-records))
@@ -907,16 +1137,24 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Wybor warstwy dla automatu ---
+(defun geocad-multi-select-auto-records-by-layer (records)
+  ;; Zostawione dla zgodnosci z aktualna wersja pliku.
+  (geocad-multi-select-records-by-layer records "Automat")
+)
+
+
 (defun c:NIWELACJA_MULTI
   (
     /
     old-err old-osmode old-cmdecho old-clayer
     crvEnt crvObj ss
-    valid-nodes
+    valid-nodes generation-nodes
     auto-valid-records auto-selected-records
-    auto-result selected-result manual-result manual-records
+    auto-result selected-result manual-result manual-records manual-selected-records
     auto-omitted omitted
     auto-tolerance tol-input point-mode point-layer selected-layer
+    closed-curve total-len
     node1 node2 L1 Z1 L2 Z2 dL slope
     mode step num-pts segment-step L-cur segment-count effective-step k
     doc space pt-cur z-cur zlicz draw-3d poly-pts
@@ -989,6 +1227,13 @@
       (alert "Wybrany obiekt nie jest poprawna osia trasy. Wybierz linie, polilinie albo luk.")
       (exit)
     )
+  )
+
+  (setq total-len (geocad-multi-curve-total-length crvObj))
+  (setq closed-curve (geocad-multi-closed-curve-p crvObj))
+
+  (if closed-curve
+    (princ "\nWykryto zamknieta os trasy - wlaczono obsluge przejscia przez poczatek/koniec polilinii.")
   )
 
 
@@ -1146,16 +1391,40 @@
             )
 
             (setq manual-records (car manual-result))
-            (setq valid-nodes (geocad-multi-records-to-nodes manual-records))
             (setq omitted (cadr manual-result))
             (setq selected-layer nil)
 
-            (if (< (length valid-nodes) 2)
+            (if (< (length manual-records) 2)
               (progn
                 (alert
                   "Za malo poprawnych punktow! Zaznacz przynajmniej 2 pikiety GeoprofiCAD z rzedna Z."
                 )
                 (setq point-mode nil)
+              )
+
+              (progn
+                ;; Rowniez w trybie recznym pilnujemy warstw.
+                ;; Jezeli zaznaczono pikiety z kilku warstw, uzytkownik wybiera,
+                ;; ktora warstwe uwzglednic albo czy brac wszystkie.
+                (setq selected-result
+                  (geocad-multi-select-records-by-layer manual-records "Tryb reczny")
+                )
+
+                (setq manual-selected-records (car selected-result))
+                (setq selected-layer (cadr selected-result))
+
+                (if (< (length manual-selected-records) 2)
+                  (progn
+                    (alert
+                      "Wybrana warstwa ma mniej niz 2 poprawne punkty bazowe. Wybierz wszystkie warstwy albo zaznacz inne punkty."
+                    )
+                    (setq point-mode nil)
+                  )
+
+                  (setq valid-nodes
+                    (geocad-multi-records-to-nodes manual-selected-records)
+                  )
+                )
               )
             )
           )
@@ -1185,6 +1454,15 @@
     )
   )
 
+  (setq generation-nodes
+    (geocad-multi-build-generation-nodes
+      valid-nodes
+      closed-curve
+      total-len
+      point-mode
+    )
+  )
+
   (princ
     (strcat
       "\n>>> Znaleziono "
@@ -1198,18 +1476,26 @@
   (if selected-layer
     (princ
       (strcat
-        "\n>>> Warstwy automatu: "
+        "\n>>> Warstwy punktow bazowych: "
         selected-layer
         "."
       )
     )
   )
 
+  (if
+    (and
+      closed-curve
+      (> (length generation-nodes) (length valid-nodes))
+    )
+    (princ "\n>>> Zamknieta os: dodano techniczny segment domykajacy ostatni wezel z pierwszym.")
+  )
+
 
   ;; --- 4. METODA I OPCJE ---
-  ;; Rowna     - nowa logika: rowne odstepy miedzy wierzcholkami/wezlami.
-  ;; Odleglosc - stara logika: sztywny krok co podana odleglosc.
-  ;; Podzial   - stara logika: podana liczba odcinkow miedzy kazda para wezlow.
+  ;; Rowna     - rowne odstepy miedzy wierzcholkami/wezlami.
+  ;; Odleglosc - sztywny krok co podana odleglosc.
+  ;; Podzial   - podana liczba odcinkow miedzy kazda para wezlow.
   (initget 1 "Rowna Odleglosc Podzial")
 
   (setq mode
@@ -1267,9 +1553,9 @@
 
 
   ;; Zabezpieczenie pierwszej krawedzi do 3D.
-  (setq L1 (car (nth 0 valid-nodes)))
-  (setq Z1 (cadr (nth 0 valid-nodes)))
-  (setq pt-cur (get-safe-curve-pt crvObj L1))
+  (setq L1 (car (nth 0 generation-nodes)))
+  (setq Z1 (cadr (nth 0 generation-nodes)))
+  (setq pt-cur (get-safe-curve-pt-wrapped crvObj L1 total-len closed-curve))
 
   (if pt-cur
     (setq poly-pts
@@ -1289,9 +1575,9 @@
 
   (setq i 0)
 
-  (while (< i (1- (length valid-nodes)))
-    (setq node1 (nth i valid-nodes))
-    (setq node2 (nth (1+ i) valid-nodes))
+  (while (< i (1- (length generation-nodes)))
+    (setq node1 (nth i generation-nodes))
+    (setq node2 (nth (1+ i) generation-nodes))
 
     (setq L1 (car node1))
     (setq Z1 (cadr node1))
@@ -1304,6 +1590,10 @@
     ;; Wykonuj tylko, jesli punkty nie sa w tym samym miejscu.
     (if (> dL 0.001)
       (progn
+        ;; Najwazniejsza logika wysokosci:
+        ;; Z interpolujemy po rzeczywistej dlugosci segmentu L1-L2.
+        ;; Dla zamknietej osi L2 moze byc technicznie wieksze od total-len
+        ;; wtedy geometria jest zawijana, ale dL pozostaje prawidlowa.
         (setq slope (/ (- Z2 Z1) dL))
         (setq L-cur L1)
 
@@ -1344,7 +1634,7 @@
             (while (< k segment-count)
               (setq L-cur (+ L1 (* k effective-step)))
               (setq z-cur (+ Z1 (* (- L-cur L1) slope)))
-              (setq pt-cur (get-safe-curve-pt crvObj L-cur))
+              (setq pt-cur (get-safe-curve-pt-wrapped crvObj L-cur total-len closed-curve))
 
               (if pt-cur
                 (progn
@@ -1387,7 +1677,6 @@
           ;; ======================================================
           ;; TRYB: Odleglosc
           ;;
-          ;; Bez zmian.
           ;; Idzie sztywnym krokiem co "step".
           ;; Moze zostawic krotka koncowke przy wezle.
           ;; ======================================================
@@ -1396,7 +1685,7 @@
 
             (while (< L-cur (- L2 0.01))
               (setq z-cur (+ Z1 (* (- L-cur L1) slope)))
-              (setq pt-cur (get-safe-curve-pt crvObj L-cur))
+              (setq pt-cur (get-safe-curve-pt-wrapped crvObj L-cur total-len closed-curve))
 
               (if pt-cur
                 (progn
@@ -1439,7 +1728,6 @@
           ;; ======================================================
           ;; TRYB: Podzial
           ;;
-          ;; Bez zmian.
           ;; Dzieli kazdy segment na podana liczbe odcinkow.
           ;; ======================================================
           ((= mode "Podzial")
@@ -1450,7 +1738,7 @@
               (if (< L-cur (- L2 0.01))
                 (progn
                   (setq z-cur (+ Z1 (* (- L-cur L1) slope)))
-                  (setq pt-cur (get-safe-curve-pt crvObj L-cur))
+                  (setq pt-cur (get-safe-curve-pt-wrapped crvObj L-cur total-len closed-curve))
 
                   (if pt-cur
                     (progn
@@ -1496,7 +1784,7 @@
 
 
     ;; Zamkniecie aktualnego segmentu dla Linii 3D.
-    (setq pt-cur (get-safe-curve-pt crvObj L2))
+    (setq pt-cur (get-safe-curve-pt-wrapped crvObj L2 total-len closed-curve))
 
     (if pt-cur
       (setq poly-pts
