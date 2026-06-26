@@ -251,15 +251,15 @@
       (if (<= forward backward)
         ;; Krotsza droga bez przejscia przez zero.
         (list
-          (list L-a Z-a)
-          (list L-b Z-b)
+          a
+          b
         )
 
         ;; Krotsza droga przez zamkniecie:
         ;; idziemy od B do A + total.
         (list
-          (list L-b Z-b)
-          (list (+ L-a total-len) Z-a)
+          b
+          (geocad-multi-node-with-L a (+ L-a total-len))
         )
       )
     )
@@ -272,9 +272,9 @@
       (append
         sorted-nodes
         (list
-          (list
+          (geocad-multi-node-with-L
+            first-node
             (+ (car first-node) total-len)
-            (cadr first-node)
           )
         )
       )
@@ -908,14 +908,17 @@
 )
 
 
-;; --- FUNKCJA POMOCNICZA: Rekord wezla do starego formatu ---
+;; --- FUNKCJA POMOCNICZA: Rekord wezla do formatu roboczego ---
 (defun geocad-multi-record-to-node (rec)
   ;; Rekord ma format:
-  ;; (pikietaz rzedna_Z warstwa)
+  ;; (pikietaz rzedna_Z warstwa odleglosc_XY_od_osi)
   ;;
-  ;; Logika generowania oczekuje:
-  ;; (pikietaz rzedna_Z)
-  (list (car rec) (cadr rec))
+  ;; Wezel roboczy ma format:
+  ;; (pikietaz rzedna_Z odleglosc_XY_od_osi)
+  ;;
+  ;; Trzeci element jest uzywany tylko do decyzji, czy trzeba wstawic
+  ;; dodatkowa pikiete-wezel w miejscu rzutu punktu bazowego na os.
+  (list (car rec) (cadr rec) (cadddr rec))
 )
 
 
@@ -936,6 +939,124 @@
 )
 
 
+
+;; --- FUNKCJA POMOCNICZA: Odleglosc wezla od osi ---
+(defun geocad-multi-node-gap (node)
+  (if
+    (and
+      node
+      (numberp (nth 2 node))
+    )
+    (nth 2 node)
+    0.0
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Czy wezel powstal z punktu odsunietego od osi ---
+(defun geocad-multi-projected-node-p (node)
+  ;; Jezeli punkt bazowy lezal dokladnie na osi, nie generujemy jego kopii.
+  ;; Jezeli byl odsuniety, wstawiamy nowa pikiete w miejscu rzutu XY na os.
+  (> (geocad-multi-node-gap node) 0.001)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Kopia wezla z nowym pikietazem ---
+(defun geocad-multi-node-with-L (node new-L)
+  (list
+    new-L
+    (cadr node)
+    (geocad-multi-node-gap node)
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Czy pikietaz byl juz obsluzony ---
+(defun geocad-multi-L-already-in-list-p (L L-list / found item)
+  (setq found nil)
+
+  (foreach item L-list
+    (if (equal L item 0.001)
+      (setq found T)
+    )
+  )
+
+  found
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Wstawienie pikiety-wezla tylko dla punktu odsunietego od osi ---
+(defun geocad-multi-insert-projected-node-if-needed
+  (
+    node crvObj total-len closed-curve
+    batch space
+    zlicz inserted-node-Ls
+    /
+    L L-real Z pt-cur
+  )
+
+  ;; Zwraca:
+  ;; (batch zlicz inserted-node-Ls)
+  ;;
+  ;; Wstawiamy tylko wezly, ktore powstaly z punktow bazowych odsunietych od osi.
+  ;; Dzieki temu:
+  ;; - punkt lezacy juz na osi nie jest dublowany,
+  ;; - punkt spoza osi dostaje nowa pikiete dokladnie w miejscu rzutu XY,
+  ;; - Z zostaje z oryginalnej pikiety bazowej.
+  (setq L (car node))
+  (setq Z (cadr node))
+
+  (if
+    (and
+      (geocad-multi-projected-node-p node)
+      (numberp L)
+      (numberp Z)
+    )
+    (progn
+      (if
+        (and
+          closed-curve
+          (numberp total-len)
+          (> total-len 0.001)
+        )
+        (setq L-real (geocad-multi-normalize-L L total-len))
+        (setq L-real L)
+      )
+
+      (if (not (geocad-multi-L-already-in-list-p L-real inserted-node-Ls))
+        (progn
+          (setq pt-cur (get-safe-curve-pt-wrapped crvObj L total-len closed-curve))
+
+          (if pt-cur
+            (progn
+              (setq batch
+                (geocad-pikieta-batch-insert
+                  batch
+                  space
+                  (list
+                    (car pt-cur)
+                    (cadr pt-cur)
+                    Z
+                  )
+                  nil
+                  T
+                )
+              )
+
+              (setq zlicz (1+ zlicz))
+              (setq inserted-node-Ls (cons L-real inserted-node-Ls))
+            )
+          )
+        )
+      )
+    )
+  )
+
+  (list batch zlicz inserted-node-Ls)
+)
+
+
+
 ;; --- FUNKCJA POMOCNICZA: Budowanie rekordow wezlow z selection set ---
 (defun geocad-multi-build-valid-node-records-from-ss
   (
@@ -953,7 +1074,7 @@
   ;; - POINT na dowolnej zarzadzanej warstwie *_PIKIETY.
   ;;
   ;; Rekord ma format:
-  ;; (pikietaz rzedna_Z warstwa)
+  ;; (pikietaz rzedna_Z warstwa odleglosc_XY_od_osi)
   (setq records '())
   (setq omitted 0)
   (setq i 0)
@@ -1015,6 +1136,7 @@
                             (car node)
                             (cadr node)
                             layer
+                            (caddr node)
                           )
                           records
                         )
@@ -1441,6 +1563,7 @@
     auto-tolerance tol-input point-mode point-layer selected-layer
     closed-curve total-len
     node1 node2 L1 Z1 L2 Z2 dL slope
+    node-insert-result inserted-node-Ls
     mode step num-pts segment-step L-cur segment-count effective-step k
     doc space pt-cur z-cur zlicz draw-3d poly-pts
     poly-layer
@@ -1860,6 +1983,7 @@
 
   (setq zlicz 0)
   (setq poly-pts '())
+  (setq inserted-node-Ls '())
 
 
   ;; Zabezpieczenie pierwszej krawedzi do 3D.
@@ -1894,6 +2018,26 @@
 
     (setq L2 (car node2))
     (setq Z2 (cadr node2))
+
+    ;; Jezeli wezel bazowy powstal z punktu odsunietego od osi,
+    ;; wstawiamy dodatkowa pikiete dokladnie w miejscu jego rzutu XY.
+    ;; Punkt lezacy juz na osi nie jest dublowany.
+    (setq node-insert-result
+      (geocad-multi-insert-projected-node-if-needed
+        node1
+        crvObj
+        total-len
+        closed-curve
+        batch
+        space
+        zlicz
+        inserted-node-Ls
+      )
+    )
+
+    (setq batch (nth 0 node-insert-result))
+    (setq zlicz (nth 1 node-insert-result))
+    (setq inserted-node-Ls (nth 2 node-insert-result))
 
     (setq dL (- L2 L1))
 
@@ -2093,6 +2237,27 @@
     )
 
 
+    ;; Jezeli koncowy wezel segmentu powstal z punktu odsunietego od osi,
+    ;; rowniez dostaje wlasna pikiete w miejscu rzutu XY.
+    ;; Lista inserted-node-Ls zabezpiecza przed dublowaniem wezlow wspolnych.
+    (setq node-insert-result
+      (geocad-multi-insert-projected-node-if-needed
+        node2
+        crvObj
+        total-len
+        closed-curve
+        batch
+        space
+        zlicz
+        inserted-node-Ls
+      )
+    )
+
+    (setq batch (nth 0 node-insert-result))
+    (setq zlicz (nth 1 node-insert-result))
+    (setq inserted-node-Ls (nth 2 node-insert-result))
+
+
     ;; Zamkniecie aktualnego segmentu dla Linii 3D.
     (setq pt-cur (get-safe-curve-pt-wrapped crvObj L2 total-len closed-curve))
 
@@ -2185,6 +2350,7 @@
       "\nSukces! Wygenerowano "
       (itoa zlicz)
       " pikiet we wszystkich segmentach."
+      "\nUwzgledniono rowniez pikiety-wezly dla punktow bazowych odsunietych od osi."
     )
   )
 
