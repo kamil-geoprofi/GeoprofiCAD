@@ -11,9 +11,24 @@
   )
 )
 
-(defun c:NIWELACJA_KRAWEDZI ( / old-err srcEnt srcObj ssAll i obj pt projPt ptsList tgtEnt tgtObj slope-pct doc space pt-tgt dist2d z-tgt pt-list is-orthogonal param deriv Ux Uy vx vy dot lenU cos-theta skipped-nr zlicz safe-pt-tgt param-catch)   
+  (defun c:NIWELACJA_KRAWEDZI ( / old-err srcEnt srcObj ssAll i obj pt projPt ptsList tgtEnt tgtObj slope-pct doc space pt-tgt dist2d z-tgt pt-list is-orthogonal param deriv Ux Uy vx vy dot lenU cos-theta skipped-nr zlicz safe-pt-tgt param-catch batch)
       
-  (setq old-err *error* *error* (lambda (msg) (princ (strcat "\nPrzerwano: " msg)) (princ)))   
+  (setq old-err *error*
+      *error*
+      (lambda (msg)
+        (if batch
+          (progn
+            (setq batch (geocad-pikieta-batch-end batch))
+            (setq batch nil)
+          )
+        )
+
+        (setq *error* old-err)
+
+        (princ (strcat "\nPrzerwano: " msg))
+        (princ)
+      )
+) 
       
   (setq srcEnt (car (entsel "\n1. Wybierz linie ZRODLOWA (na ktorej sa juz pikiety): ")))    
   (if (not srcEnt) (exit))   
@@ -110,18 +125,37 @@
           (progn  
             (setq z-tgt (+ (caddr pt-src) (* dist2d (/ slope-pct 100.0))))   
             (setq pt-list (list (car pt-tgt) (cadr pt-tgt) z-tgt))   
-                
-            (geocad-wstaw-pikiete-full doc space pt-list "" T)   
-            (setq zlicz (1+ zlicz))   
-          )  
+
+            (if (not batch)
+              (setq batch (geocad-pikieta-batch-start doc))
+            )
+
+            (setq batch
+              (geocad-pikieta-batch-insert
+                batch
+                space
+                pt-list
+                nil
+                T
+              )
+            )
+
+          (setq zlicz (1+ zlicz))
           (setq skipped-nr (1+ skipped-nr))  
         )  
       )   
     )   
   )   
       
+  (if batch
+  (progn
+    (setq batch (geocad-pikieta-batch-end batch))
+    (setq batch nil)
+  )
+  )
+  
   (setq *error* old-err)    
-  (princ (strcat "\nSukces! Wygenerowano " (itoa zlicz) " nowych pikiet."))    
+  (princ (strcat "\nSukces! Wygenerowano " (itoa zlicz) " nowych pikiet."))  
   (if (> skipped-nr 0)   
     (princ (strcat " (Zignorowano " (itoa skipped-nr) " pikiet rzutujacych sie poza fizyczna dlugosc linii)."))  
   )  
