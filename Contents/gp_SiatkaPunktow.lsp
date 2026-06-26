@@ -7,9 +7,15 @@
 ;;
 ;; Funkcja:
 ;; - wybiera zamkniety obrys,
-;; - opcjonalnie dodaje punkty w naroznikach/zalamaniach obrysu,
-;; - generuje pikiety na obrysie co zadany interwal,
-;; - generuje pikiety wewnatrz obrysu,
+;; - tryb Standard:
+;;   - opcjonalnie dodaje punkty w naroznikach/zalamaniach obrysu,
+;;   - generuje pikiety na obrysie co zadany interwal,
+;;   - generuje pikiety wewnatrz obrysu,
+;; - tryb Budynek:
+;;   - tworzy drugi obrys odsuniety do wewnatrz,
+;;   - opcjonalnie dodaje punkty w naroznikach/zalamaniach obrysu zewnetrznego i wewnetrznego,
+;;   - generuje pikiety na obrysie zewnetrznym i wewnetrznym,
+;;   - generuje siatke tylko wewnatrz obrysu wewnetrznego,
 ;; - pikiety dostaja zadana wysokosc Z,
 ;; - test wnetrza robiony jest na wysokosci obrysu.
 ;; ======================================================
@@ -48,6 +54,21 @@
 
 (defun geocad-grid-curve-length (crv)
   (vlax-curve-getDistAtParam crv (vlax-curve-getEndParam crv))
+)
+
+
+(defun geocad-grid-safe-curve-length (crv / res)
+  (setq res
+    (vl-catch-all-apply
+      'geocad-grid-curve-length
+      (list crv)
+    )
+  )
+
+  (if (and (not (vl-catch-all-error-p res)) (numberp res) (> res 0.001))
+    res
+    nil
+  )
 )
 
 
@@ -276,27 +297,379 @@
 )
 
 
+(defun geocad-grid-get-test-z (obj / start-pt)
+  ;; Z obiektu, na ktorej testujemy przeciecia.
+  ;; Dla typowego obrysu 2D bedzie to 0.0.
+  (setq start-pt
+    (vl-catch-all-apply
+      'vlax-curve-getStartPoint
+      (list obj)
+    )
+  )
+
+  (if
+    (and
+      start-pt
+      (not (vl-catch-all-error-p start-pt))
+      (caddr start-pt)
+    )
+    (caddr start-pt)
+    0.0
+  )
+)
+
+
+(defun geocad-grid-offset-result-to-list (res / lst)
+  ;; vla-Offset zwykle zwraca VARIANT z tablica obiektow.
+  ;; Zabezpieczamy tez przypadek pojedynczego obiektu.
+  (cond
+    ((vl-catch-all-error-p res)
+      nil
+    )
+
+    ((vlax-objectp res)
+      (list res)
+    )
+
+    (T
+      (setq lst
+        (vl-catch-all-apply
+          '(lambda ()
+             (vlax-safearray->list (vlax-variant-value res))
+           )
+        )
+      )
+
+      (if (vl-catch-all-error-p lst)
+        nil
+        lst
+      )
+    )
+  )
+)
+
+
+(defun geocad-grid-make-offset-objects (obj dist / res)
+  (setq res
+    (vl-catch-all-apply
+      'vla-Offset
+      (list obj dist)
+    )
+  )
+
+  (geocad-grid-offset-result-to-list res)
+)
+
+
+(defun geocad-grid-delete-objects (objs)
+  (foreach o objs
+    (if (vlax-objectp o)
+      (vl-catch-all-apply 'vla-Delete (list o))
+    )
+  )
+)
+
+
+(defun geocad-grid-delete-objects-except (objs keep)
+  (foreach o objs
+    (if
+      (and
+        (vlax-objectp o)
+        (not (eq o keep))
+      )
+      (vl-catch-all-apply 'vla-Delete (list o))
+    )
+  )
+)
+
+
+(defun geocad-grid-valid-inner-offset-p
+  (
+    outer-obj candidate-obj space
+    outer-minx outer-miny outer-maxx outer-maxy outer-test-z
+    /
+    len
+    p1 p2 p3
+  )
+
+  ;; Kandydat offsetu musi:
+  ;; - byc zamkniety,
+  ;; - miec dodatnia dlugosc,
+  ;; - miec kilka punktow probnych wewnatrz obrysu zewnetrznego.
+  (if
+    (and
+      candidate-obj
+      (vlax-objectp candidate-obj)
+      (geocad-grid-closed-p candidate-obj)
+      (setq len (geocad-grid-safe-curve-length candidate-obj))
+    )
+    (progn
+      (setq p1
+        (vl-catch-all-apply
+          'vlax-curve-getPointAtDist
+          (list candidate-obj (* len 0.15))
+        )
+      )
+
+      (setq p2
+        (vl-catch-all-apply
+          'vlax-curve-getPointAtDist
+          (list candidate-obj (* len 0.50))
+        )
+      )
+
+      (setq p3
+        (vl-catch-all-apply
+          'vlax-curve-getPointAtDist
+          (list candidate-obj (* len 0.85))
+        )
+      )
+
+      (and
+        p1
+        p2
+        p3
+        (not (vl-catch-all-error-p p1))
+        (not (vl-catch-all-error-p p2))
+        (not (vl-catch-all-error-p p3))
+        (geocad-grid-inside-p outer-obj space p1 outer-minx outer-miny outer-maxx outer-maxy outer-test-z)
+        (geocad-grid-inside-p outer-obj space p2 outer-minx outer-miny outer-maxx outer-maxy outer-test-z)
+        (geocad-grid-inside-p outer-obj space p3 outer-minx outer-miny outer-maxx outer-maxy outer-test-z)
+      )
+    )
+
+    nil
+  )
+)
+
+
+(defun geocad-grid-find-inner-offset
+  (
+    outer-obj objs space
+    outer-minx outer-miny outer-maxx outer-maxy outer-test-z
+    /
+    found
+  )
+
+  (setq found nil)
+
+  (foreach o objs
+    (if
+      (and
+        (not found)
+        (geocad-grid-valid-inner-offset-p
+          outer-obj
+          o
+          space
+          outer-minx
+          outer-miny
+          outer-maxx
+          outer-maxy
+          outer-test-z
+        )
+      )
+      (setq found o)
+    )
+  )
+
+  found
+)
+
+
+(defun geocad-grid-create-inner-offset
+  (
+    outer-obj space offset-distance
+    outer-minx outer-miny outer-maxx outer-maxy outer-test-z
+    /
+    objs inner
+  )
+
+  ;; Kierunek offsetu zalezy od kierunku polilinii.
+  ;; Dlatego probujemy +d, sprawdzamy czy jest wewnatrz,
+  ;; a jezeli nie, probujemy -d.
+  (setq objs (geocad-grid-make-offset-objects outer-obj offset-distance))
+
+  (setq inner
+    (geocad-grid-find-inner-offset
+      outer-obj
+      objs
+      space
+      outer-minx
+      outer-miny
+      outer-maxx
+      outer-maxy
+      outer-test-z
+    )
+  )
+
+  (if inner
+    (progn
+      (geocad-grid-delete-objects-except objs inner)
+      inner
+    )
+
+    (progn
+      (geocad-grid-delete-objects objs)
+
+      (setq objs (geocad-grid-make-offset-objects outer-obj (- offset-distance)))
+
+      (setq inner
+        (geocad-grid-find-inner-offset
+          outer-obj
+          objs
+          space
+          outer-minx
+          outer-miny
+          outer-maxx
+          outer-maxy
+          outer-test-z
+        )
+      )
+
+      (if inner
+        (progn
+          (geocad-grid-delete-objects-except objs inner)
+          inner
+        )
+
+        (progn
+          (geocad-grid-delete-objects objs)
+          nil
+        )
+      )
+    )
+  )
+)
+
+
+(defun geocad-grid-insert-breakpoints
+  (
+    obj space zval seen batch cnt
+    /
+    breakpoints bp res old-cnt added
+  )
+
+  (setq added 0)
+  (setq breakpoints (geocad-grid-get-breakpoints obj))
+
+  (foreach bp breakpoints
+    (setq old-cnt cnt)
+
+    (setq res
+      (geocad-grid-insert-unique
+        space
+        bp
+        zval
+        seen
+        batch
+        cnt
+      )
+    )
+
+    (setq seen (car res))
+    (setq batch (cadr res))
+    (setq cnt (caddr res))
+
+    (if (> cnt old-cnt)
+      (setq added (1+ added))
+    )
+  )
+
+  (list seen batch cnt added)
+)
+
+
+(defun geocad-grid-insert-border-points
+  (
+    obj space zval border-step seen batch cnt
+    /
+    len d p res old-cnt added
+  )
+
+  (setq added 0)
+  (setq len (geocad-grid-safe-curve-length obj))
+
+  (if len
+    (progn
+      (setq d 0.0)
+
+      (while (< d len)
+        (setq p
+          (vl-catch-all-apply
+            'vlax-curve-getPointAtDist
+            (list obj d)
+          )
+        )
+
+        (if
+          (and
+            p
+            (not (vl-catch-all-error-p p))
+          )
+          (progn
+            (setq old-cnt cnt)
+
+            (setq res
+              (geocad-grid-insert-unique
+                space
+                p
+                zval
+                seen
+                batch
+                cnt
+              )
+            )
+
+            (setq seen (car res))
+            (setq batch (cadr res))
+            (setq cnt (caddr res))
+
+            (if (> cnt old-cnt)
+              (setq added (1+ added))
+            )
+          )
+        )
+
+        (setq d (+ d border-step))
+      )
+    )
+  )
+
+  (list seen batch cnt added)
+)
+
+
 (defun c:SIATKA_PUNKTOW
   (
     /
     olderr
     acad doc space
-    ent obj
-    len len-res
+    undo-started keep-inner-offset
+    ent obj grid-obj inner-obj
+    grid-mode offset-distance
+    len len-res inner-len
     bbox minp maxp minx miny maxx maxy
-    test-z start-pt
+    outer-bbox outer-minp outer-maxp outer-minx outer-miny outer-maxx outer-maxy outer-test-z
+    test-z
     step-x step-y border-step
-    add-breakpoints breakpoints bp
+    add-breakpoints
     zval
     basept basept-wcs basex basey
     x y start-x start-y
     pt res
-    seen batch cnt cnt-corners cnt-border cnt-inside
+    seen batch cnt
+    cnt-corners cnt-inner-corners
+    cnt-border cnt-inner-border
+    cnt-inside
     ncols nrows est answer
-    d p
   )
 
   (setq olderr *error*)
+  (setq undo-started nil)
+  (setq keep-inner-offset nil)
+  (setq inner-obj nil)
+  (setq batch nil)
+  (setq cnt 0)
 
   (defun *error* (msg)
     ;; Jezeli przerwano po wstawieniu czesci pikiet,
@@ -308,14 +681,32 @@
       )
     )
 
-    (if doc
-      (vl-catch-all-apply 'vla-EndUndoMark (list doc))
+    ;; Jezeli w trybie Budynek utworzono offset, ale komenda padla
+    ;; zanim faktycznie zaczela generowac punkty, kasujemy niedokonczony offset.
+    (if
+      (and
+        inner-obj
+        (vlax-objectp inner-obj)
+        (not keep-inner-offset)
+        (or (not cnt) (= cnt 0))
+      )
+      (vl-catch-all-apply 'vla-Delete (list inner-obj))
+    )
+
+    (if (and doc undo-started)
+      (progn
+        (vl-catch-all-apply 'vla-EndUndoMark (list doc))
+        (setq undo-started nil)
+      )
     )
 
     (setq *error* olderr)
 
     (if msg
-      (princ (strcat "\nPrzerwano: " msg))
+      (if (not (member msg '("Function cancelled" "quit / exit abort")))
+        (princ (strcat "\nPrzerwano: " msg))
+        (princ "\nPrzerwano.")
+      )
     )
 
     (princ)
@@ -373,7 +764,36 @@
   )
 
   ;; ------------------------------------------------------
-  ;; 4. Parametry siatki
+  ;; 4. Tryb pracy
+  ;; ------------------------------------------------------
+  (initget "Standard Budynek")
+  (setq grid-mode
+    (getkword "\nTryb siatki [Standard/Budynek] <Standard>: ")
+  )
+
+  (if (not grid-mode)
+    (setq grid-mode "Standard")
+  )
+
+  (if (= grid-mode "Budynek")
+    (progn
+      (setq offset-distance
+        (getreal "\nPodaj odsuniecie wewnetrznego obrysu do srodka [m]: ")
+      )
+
+      (if (or (not offset-distance) (<= offset-distance 0.0))
+        (progn
+          (alert "Odsuniecie wewnetrznego obrysu musi byc wieksze od zera.")
+          (setq *error* olderr)
+          (princ)
+          (exit)
+        )
+      )
+    )
+  )
+
+  ;; ------------------------------------------------------
+  ;; 5. Parametry siatki
   ;; ------------------------------------------------------
   (setq step-x (getreal "\nPodaj rozstaw siatki w osi X [m] <1.00>: "))
   (if (not step-x)
@@ -409,7 +829,7 @@
   )
 
   ;; ------------------------------------------------------
-  ;; 5. Opcja dodawania naroznikow / zalaman
+  ;; 6. Opcja dodawania naroznikow / zalaman
   ;; ------------------------------------------------------
   (initget "Tak Nie")
   (setq add-breakpoints
@@ -421,7 +841,7 @@
   )
 
   ;; ------------------------------------------------------
-  ;; 6. Rzedna Z pikiet
+  ;; 7. Rzedna Z pikiet
   ;; ------------------------------------------------------
   (setq zval (getreal "\nPodaj rzedna/wysokosc Z dla punktow: "))
 
@@ -435,9 +855,83 @@
   )
 
   ;; ------------------------------------------------------
-  ;; 7. Bounding box
+  ;; 8. Przygotowanie obrysu roboczego
   ;; ------------------------------------------------------
-  (setq bbox (geocad-grid-get-bbox obj))
+  (setq grid-obj obj)
+
+  (vla-StartUndoMark doc)
+  (setq undo-started T)
+
+  (if (= grid-mode "Budynek")
+    (progn
+      (princ "\nTworzenie wewnetrznego obrysu...")
+
+      (setq outer-bbox (geocad-grid-get-bbox obj))
+      (setq outer-minp (car outer-bbox))
+      (setq outer-maxp (cadr outer-bbox))
+
+      (setq outer-minx (car outer-minp))
+      (setq outer-miny (cadr outer-minp))
+      (setq outer-maxx (car outer-maxp))
+      (setq outer-maxy (cadr outer-maxp))
+
+      (setq outer-test-z (geocad-grid-get-test-z obj))
+
+      (setq inner-obj
+        (geocad-grid-create-inner-offset
+          obj
+          space
+          offset-distance
+          outer-minx
+          outer-miny
+          outer-maxx
+          outer-maxy
+          outer-test-z
+        )
+      )
+
+      (if (not inner-obj)
+        (progn
+          (alert "Nie udalo sie utworzyc poprawnego obrysu wewnetrznego. Sprawdz, czy odsuniecie nie jest za duze albo czy obrys nie ma problematycznej geometrii.")
+          (if undo-started
+            (progn
+              (vl-catch-all-apply 'vla-EndUndoMark (list doc))
+              (setq undo-started nil)
+            )
+          )
+          (setq *error* olderr)
+          (princ)
+          (exit)
+        )
+      )
+
+      (setq grid-obj inner-obj)
+      (setq inner-len (geocad-grid-safe-curve-length inner-obj))
+
+      (if (not inner-len)
+        (progn
+          (alert "Wewnetrzny obrys zostal utworzony, ale nie ma poprawnej dlugosci.")
+          (vl-catch-all-apply 'vla-Delete (list inner-obj))
+          (if undo-started
+            (progn
+              (vl-catch-all-apply 'vla-EndUndoMark (list doc))
+              (setq undo-started nil)
+            )
+          )
+          (setq *error* olderr)
+          (princ)
+          (exit)
+        )
+      )
+
+      (princ "\n-> Utworzono wewnetrzny obrys.")
+    )
+  )
+
+  ;; ------------------------------------------------------
+  ;; 9. Bounding box obrysu roboczego
+  ;; ------------------------------------------------------
+  (setq bbox (geocad-grid-get-bbox grid-obj))
   (setq minp (car bbox))
   (setq maxp (cadr bbox))
 
@@ -447,21 +941,16 @@
   (setq maxy (cadr maxp))
 
   ;; ------------------------------------------------------
-  ;; 8. Wysokosc Z obrysu do testu przeciecia
+  ;; 10. Wysokosc Z obrysu do testu przeciecia
   ;; ------------------------------------------------------
   ;; Pikiety moga miec Z=134.78, ale obrys zwykle lezy na Z=0.
-  ;; Test przeciecia musi isc na Z obrysu.
-  (setq start-pt (vlax-curve-getStartPoint obj))
-
-  (if (and start-pt (caddr start-pt))
-    (setq test-z (caddr start-pt))
-    (setq test-z 0.0)
-  )
+  ;; Test przeciecia musi isc na Z obrysu roboczego.
+  (setq test-z (geocad-grid-get-test-z grid-obj))
 
   ;; ------------------------------------------------------
-  ;; 9. Punkt startowy siatki
+  ;; 11. Punkt startowy siatki
   ;; ------------------------------------------------------
-  (setq basept (getpoint "\nWskaz punkt startowy siatki albo ENTER = automatycznie od lewego dolnego zakresu obrysu: "))
+  (setq basept (getpoint "\nWskaz punkt startowy siatki albo ENTER = automatycznie od lewego dolnego zakresu obrysu roboczego: "))
 
   (if basept
     (progn
@@ -479,7 +968,7 @@
   (setq start-y (geocad-grid-first-at-or-after miny basey step-y))
 
   ;; ------------------------------------------------------
-  ;; 10. Ostrzezenie przy duzej liczbie kandydatow
+  ;; 12. Ostrzezenie przy duzej liczbie kandydatow
   ;; ------------------------------------------------------
   (setq ncols (1+ (fix (/ (- maxx minx) step-x))))
   (setq nrows (1+ (fix (/ (- maxy miny) step-y))))
@@ -501,6 +990,23 @@
       (if (/= answer "Tak")
         (progn
           (princ "\nAnulowano.")
+
+          (if
+            (and
+              inner-obj
+              (vlax-objectp inner-obj)
+              (not keep-inner-offset)
+            )
+            (vl-catch-all-apply 'vla-Delete (list inner-obj))
+          )
+
+          (if undo-started
+            (progn
+              (vl-catch-all-apply 'vla-EndUndoMark (list doc))
+              (setq undo-started nil)
+            )
+          )
+
           (setq *error* olderr)
           (princ)
           (exit)
@@ -510,16 +1016,17 @@
   )
 
   ;; ------------------------------------------------------
-  ;; 11. Generowanie punktow
+  ;; 13. Generowanie punktow
   ;; ------------------------------------------------------
   (setq seen '())
   (setq batch nil)
   (setq cnt 0)
-  (setq cnt-corners 0)
-  (setq cnt-border 0)
-  (setq cnt-inside 0)
 
-  (vla-StartUndoMark doc)
+  (setq cnt-corners 0)
+  (setq cnt-inner-corners 0)
+  (setq cnt-border 0)
+  (setq cnt-inner-border 0)
+  (setq cnt-inside 0)
 
   ;; Sesja masowego wstawiania pikiet.
   ;; Context, warstwy i konfiguracja sa przygotowane raz.
@@ -527,59 +1034,107 @@
   (setq batch (geocad-pikieta-batch-start doc))
 
   ;; ------------------------------------------------------
-  ;; 11A. Punkty w naroznikach / zalamaniach
+  ;; 13A. Punkty w naroznikach / zalamaniach
   ;; ------------------------------------------------------
   (if (= add-breakpoints "Tak")
     (progn
-      (princ "\nGenerowanie punktow w naroznikach/zalamaniach obrysu...")
+      (princ "\nGenerowanie punktow w naroznikach/zalamaniach obrysu zewnetrznego...")
 
-      (setq breakpoints (geocad-grid-get-breakpoints obj))
-
-      (foreach bp breakpoints
-        (setq res (geocad-grid-insert-unique space bp zval seen batch cnt))
-
-        (if (> (caddr res) cnt)
-          (setq cnt-corners (1+ cnt-corners))
+      (setq res
+        (geocad-grid-insert-breakpoints
+          obj
+          space
+          zval
+          seen
+          batch
+          cnt
         )
+      )
 
-        (setq seen (car res))
-        (setq batch (cadr res))
-        (setq cnt (caddr res))
+      (setq seen (car res))
+      (setq batch (cadr res))
+      (setq cnt (caddr res))
+      (setq cnt-corners (cadddr res))
+
+      (if (= grid-mode "Budynek")
+        (progn
+          (princ "\nGenerowanie punktow w naroznikach/zalamaniach obrysu wewnetrznego...")
+
+          (setq res
+            (geocad-grid-insert-breakpoints
+              inner-obj
+              space
+              zval
+              seen
+              batch
+              cnt
+            )
+          )
+
+          (setq seen (car res))
+          (setq batch (cadr res))
+          (setq cnt (caddr res))
+          (setq cnt-inner-corners (cadddr res))
+        )
       )
     )
   )
 
   ;; ------------------------------------------------------
-  ;; 11B. Punkty na obrysie co zadany interwal
+  ;; 13B. Punkty na obrysie zewnetrznym co zadany interwal
   ;; ------------------------------------------------------
-  (princ "\nGenerowanie punktow na obrysie...")
+  (princ "\nGenerowanie punktow na obrysie zewnetrznym...")
 
-  (setq d 0.0)
-
-  (while (< d len)
-    (setq p (vlax-curve-getPointAtDist obj d))
-
-    (if p
-      (progn
-        (setq res (geocad-grid-insert-unique space p zval seen batch cnt))
-
-        (if (> (caddr res) cnt)
-          (setq cnt-border (1+ cnt-border))
-        )
-
-        (setq seen (car res))
-        (setq batch (cadr res))
-        (setq cnt (caddr res))
-      )
+  (setq res
+    (geocad-grid-insert-border-points
+      obj
+      space
+      zval
+      border-step
+      seen
+      batch
+      cnt
     )
+  )
 
-    (setq d (+ d border-step))
+  (setq seen (car res))
+  (setq batch (cadr res))
+  (setq cnt (caddr res))
+  (setq cnt-border (cadddr res))
+
+  ;; ------------------------------------------------------
+  ;; 13C. Punkty na obrysie wewnetrznym co zadany interwal
+  ;; ------------------------------------------------------
+  (if (= grid-mode "Budynek")
+    (progn
+      (princ "\nGenerowanie punktow na obrysie wewnetrznym...")
+
+      (setq res
+        (geocad-grid-insert-border-points
+          inner-obj
+          space
+          zval
+          border-step
+          seen
+          batch
+          cnt
+        )
+      )
+
+      (setq seen (car res))
+      (setq batch (cadr res))
+      (setq cnt (caddr res))
+      (setq cnt-inner-border (cadddr res))
+    )
   )
 
   ;; ------------------------------------------------------
-  ;; 11C. Punkty wewnatrz obrysu
+  ;; 13D. Punkty wewnatrz obrysu roboczego
   ;; ------------------------------------------------------
-  (princ "\nGenerowanie punktow wewnatrz obrysu...")
+  (if (= grid-mode "Budynek")
+    (princ "\nGenerowanie punktow wewnatrz obrysu wewnetrznego...")
+    (princ "\nGenerowanie punktow wewnatrz obrysu...")
+  )
 
   (setq x start-x)
 
@@ -589,7 +1144,7 @@
     (while (<= y (+ maxy 0.0001))
       (setq pt (list x y zval))
 
-      (if (geocad-grid-inside-p obj space pt minx miny maxx maxy test-z)
+      (if (geocad-grid-inside-p grid-obj space pt minx miny maxx maxy test-z)
         (progn
           (setq res (geocad-grid-insert-unique space pt zval seen batch cnt))
 
@@ -610,7 +1165,7 @@
   )
 
   ;; ------------------------------------------------------
-  ;; 12. Aktualizacja licznika GeoprofiCAD
+  ;; 14. Aktualizacja licznika GeoprofiCAD
   ;; ------------------------------------------------------
   ;; Batch zapisuje finalny licznik tylko wtedy, gdy faktycznie uzyto auto-numeracji.
   (if batch
@@ -620,23 +1175,57 @@
     )
   )
 
-  (vla-EndUndoMark doc)
+  ;; W trybie Budynek wewnetrzny obrys ma zostac w rysunku.
+  (if (= grid-mode "Budynek")
+    (setq keep-inner-offset T)
+  )
+
+  (if undo-started
+    (progn
+      (vla-EndUndoMark doc)
+      (setq undo-started nil)
+    )
+  )
 
   (setq *error* olderr)
 
-  (princ
-    (strcat
-      "\nSukces. Wygenerowano "
-      (itoa cnt)
-      " pikiet."
-      "\n - narozniki/zalamania: "
-      (itoa cnt-corners)
-      "\n - na obrysie: "
-      (itoa cnt-border)
-      "\n - wewnatrz: "
-      (itoa cnt-inside)
-      "\nZ testu obrysu: "
-      (rtos test-z 2 3)
+  (if (= grid-mode "Budynek")
+    (princ
+      (strcat
+        "\nSukces. Wygenerowano "
+        (itoa cnt)
+        " pikiet."
+        "\nTryb: Budynek"
+        "\n - narozniki/zalamania zewnetrzne: "
+        (itoa cnt-corners)
+        "\n - narozniki/zalamania wewnetrzne: "
+        (itoa cnt-inner-corners)
+        "\n - na obrysie zewnetrznym: "
+        (itoa cnt-border)
+        "\n - na obrysie wewnetrznym: "
+        (itoa cnt-inner-border)
+        "\n - wewnatrz obrysu wewnetrznego: "
+        (itoa cnt-inside)
+        "\nZ testu obrysu roboczego: "
+        (rtos test-z 2 3)
+      )
+    )
+
+    (princ
+      (strcat
+        "\nSukces. Wygenerowano "
+        (itoa cnt)
+        " pikiet."
+        "\nTryb: Standard"
+        "\n - narozniki/zalamania: "
+        (itoa cnt-corners)
+        "\n - na obrysie: "
+        (itoa cnt-border)
+        "\n - wewnatrz: "
+        (itoa cnt-inside)
+        "\nZ testu obrysu: "
+        (rtos test-z 2 3)
+      )
     )
   )
 
