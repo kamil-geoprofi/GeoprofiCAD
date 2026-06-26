@@ -1,15 +1,58 @@
 (vl-load-com)   
 (load "gp_Core.lsp" "\nBLAD: Nie znaleziono pliku gp_Core.lsp!") 
  
-(defun geocad-err (msg) 
-  (if file (close file)) (if doc (vla-EndUndoMark doc)) 
-  (if old-cmdecho (setvar "CMDECHO" old-cmdecho)) (if old-attmode (setvar "ATTMODE" old-attmode)) 
-  (if old-dimzin (setvar "DIMZIN" old-dimzin)) (if old-pdmode (setvar "PDMODE" old-pdmode)) 
-  (if old-pdsize (setvar "PDSIZE" old-pdsize)) (if old-osmode (setvar "OSMODE" old-osmode)) 
-  (setq *error* old-err)  
-  (if (not (member msg '("Function cancelled" "quit / exit abort"))) (princ (strcat "\nBlad skryptu: " msg)) (princ "\nPrzerwano (ESC).")) 
-  (princ) 
-) 
+(defun geocad-err (msg)
+  ;; Jezeli import zostal przerwany po czesciowym wstawieniu pikiet,
+  ;; domykamy batch. Dla importu z numerami z pliku batch zwykle nie
+  ;; zapisze GeoLicznik, ale domkniecie jest bezpieczne i spojne.
+  (if batch
+    (progn
+      (setq batch (geocad-pikieta-batch-end batch))
+      (setq batch nil)
+    )
+  )
+
+  (if file
+    (close file)
+  )
+
+  (if doc
+    (vla-EndUndoMark doc)
+  )
+
+  (if old-cmdecho
+    (setvar "CMDECHO" old-cmdecho)
+  )
+
+  (if old-attmode
+    (setvar "ATTMODE" old-attmode)
+  )
+
+  (if old-dimzin
+    (setvar "DIMZIN" old-dimzin)
+  )
+
+  (if old-pdmode
+    (setvar "PDMODE" old-pdmode)
+  )
+
+  (if old-pdsize
+    (setvar "PDSIZE" old-pdsize)
+  )
+
+  (if old-osmode
+    (setvar "OSMODE" old-osmode)
+  )
+
+  (setq *error* old-err)
+
+  (if (not (member msg '("Function cancelled" "quit / exit abort")))
+    (princ (strcat "\nBlad skryptu: " msg))
+    (princ "\nPrzerwano (ESC).")
+  )
+
+  (princ)
+)
  
 (defun get-native-windows-file ( / wsh tmpFile shellCmd f res )  
   (setq wsh (vlax-create-object "WScript.Shell") tmpFile (vl-filename-mktemp "file_res.txt"))  
@@ -33,7 +76,7 @@
                             px py pz pz-geom nr count valid acadObj doc mspace prec-geom-str prec-geom tokens  
                             total-valid current-valid idx-first idx-mid idx-last delim-code current-delim line-first line-mid line-last c1 c2 sys-info len current-format temp-delim dialog-running 
                             dcl-file dcl-fn dcl-id status minX minY maxX maxY dXX dYY margX margY marg p1 p2 
-                            c-nr c-x c-y c-z delim-str do-zoom old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z)      
+                            c-nr c-x c-y c-z delim-str do-zoom old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z batch)      
   
   (setq old-err *error* *error* geocad-err) 
   (setq old-cmdecho (getvar "CMDECHO") old-attmode (getvar "ATTMODE") old-dimzin (getvar "DIMZIN") old-pdmode (getvar "PDMODE") old-pdsize (getvar "PDSIZE") old-osmode (getvar "OSMODE"))  
@@ -109,7 +152,14 @@
   (setq format-choice current-format) (if (= format-choice "7") (setq c-nr (atoi c-nr) c-x (atoi c-x) c-y (atoi c-y) c-z (atoi c-z))) 
   (setq prec-geom (if (= prec-geom-str "") nil (atoi prec-geom-str)))
   
-  (vla-StartUndoMark doc) (setq count 0 minX nil minY nil maxX nil maxY nil) 
+  (vla-StartUndoMark doc)
+
+  ;; Sesja importu pikiet.
+  ;; Context, warstwy i konfiguracja sa przygotowane raz.
+  ;; Numery z pliku / z lokalnego licznika importu sa przekazywane jawnie.
+  (setq batch (geocad-pikieta-batch-start doc))
+
+  (setq count 0 minX nil minY nil maxX nil maxY nil) 
   (princ "\nImportowanie z wylaczna obsluga interfejsu (Ustawienia rysunkowe pobrane z GEO_SETUP)...") 
   (setvar "OSMODE" 0) (setq file (open filename "r"))   
   
@@ -133,15 +183,38 @@
         ;; Sprawdzamy czy dany plik w ogóle posiada kolumnę Z
         (setq show-z (if (member format-choice '("1" "2" "3" "4" "7")) T nil))
 
-        ;; Czyste oddelegowanie do Biblioteki. Przekazujemy Numer z pliku. To Biblioteka ukryje go, jeśli tak ustawiono w GEO_SETUP!
-        (geocad-wstaw-pikiete-full doc mspace (list px py pz-geom) nr show-z) 
+        ;; Czyste oddelegowanie do Biblioteki.
+        ;; Przekazujemy numer z pliku / lokalny numer importu jawnie,
+        ;; wiec zachowujemy stare zachowanie importu.
+        (setq batch
+          (geocad-pikieta-batch-insert
+            batch
+            mspace
+            (list px py pz-geom)
+            nr
+            show-z
+          )
+        )
              
         (setq count (1+ count))      
       )      
     )      
   )   
   
-  (close file) (setvar "OSMODE" old-osmode) (vla-EndUndoMark doc) (setq *error* old-err) 
+  (if batch
+  (progn
+    (setq batch (geocad-pikieta-batch-end batch))
+    (setq batch nil)
+  )
+)
+
+(close file)
+
+(setvar "OSMODE" old-osmode)
+
+(vla-EndUndoMark doc)
+
+(setq *error* old-err)
   (if (and minX (= do-zoom "1")) (progn (setq dXX (- maxX minX) dYY (- maxY minY) margX (if (> dXX 0) (* dXX 0.1) 20.0) margY (if (> dYY 0) (* dYY 0.1) 20.0) marg (max margX margY 10.0) p1 (list (- minX marg) (- minY marg) 0.0) p2 (list (+ maxX marg) (+ maxY marg) 0.0)) (vla-ZoomWindow acadObj (vlax-3d-point p1) (vlax-3d-point p2)))) 
   (princ (strcat "\nSukces! Zaimportowano " (itoa count) " pikiet.")) (princ)      
 )      
