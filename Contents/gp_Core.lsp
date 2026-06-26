@@ -237,6 +237,72 @@
   (vl-sort lst '<)
 )
 
+(defun geocad-layer-object-if-exists (layers layname / res)
+  (if (and layers layname (/= layname ""))
+    (progn
+      (setq res
+        (vl-catch-all-apply
+          'vla-Item
+          (list layers layname)
+        )
+      )
+
+      (if (vl-catch-all-error-p res)
+        nil
+        res
+      )
+    )
+    nil
+  )
+)
+
+
+(defun geocad-update-layer-color-if-exists (layers layname kolor / lay)
+  (setq lay (geocad-layer-object-if-exists layers layname))
+
+  (if lay
+    (vl-catch-all-apply
+      'vla-put-Color
+      (list lay kolor)
+    )
+  )
+)
+
+
+(defun geocad-update-managed-layer-colors (doc prefix kolor / layers)
+  ;; Aktualizuje kolor wszystkich istniejacych warstw danej grupy.
+  ;; Nie tworzy pustych warstw, jezeli ich nie ma.
+  (if (and doc prefix (/= prefix ""))
+    (progn
+      (setq layers (vla-get-Layers doc))
+
+      (geocad-update-layer-color-if-exists
+        layers
+        (geocad-layer-name prefix *geocad-layer-type-points*)
+        kolor
+      )
+
+      (geocad-update-layer-color-if-exists
+        layers
+        (geocad-layer-name prefix *geocad-layer-type-label-nr*)
+        kolor
+      )
+
+      (geocad-update-layer-color-if-exists
+        layers
+        (geocad-layer-name prefix *geocad-layer-type-label-h*)
+        kolor
+      )
+
+      (geocad-update-layer-color-if-exists
+        layers
+        (geocad-layer-name prefix *geocad-layer-type-polyline-multi*)
+        kolor
+      )
+    )
+  )
+)
+
 (defun geocad-update-existing
   (
     doc target_prefix kolor-str txt-h-str z-prec-str display
@@ -268,6 +334,18 @@
       :vlax-false
       :vlax-true
     )
+  )
+
+  ;; ------------------------------------------------------
+  ;; Aktualizacja kolorow wszystkich istniejacych warstw grupy,
+  ;; w tym warstwy polilinii z NIWELACJA_MULTI.
+  ;; Dziala nawet wtedy, gdy grupa ma tylko polilinie i nie ma blokow.
+  ;; ------------------------------------------------------
+  (if (= target_prefix "--- WSZYSTKIE W RYSUNKU ---")
+    (foreach pref (geocad-get-existing-prefixes)
+      (geocad-update-managed-layer-colors doc pref kolor)
+    )
+    (geocad-update-managed-layer-colors doc target_prefix kolor)
   )
 
   ;; ------------------------------------------------------
@@ -394,7 +472,7 @@
         )
       )
     )
-    (princ "\n[INFO] Nie znaleziono zadnych blokow do aktualizacji.")
+    (princ "\n[INFO] Nie znaleziono blokow do aktualizacji. Zaktualizowano kolor istniejacych warstw grupy, jezeli istnialy.")
   )
 )
 
@@ -414,8 +492,19 @@
         styl (geocad-get-cfg "Styl" "Blok") 
         display (geocad-get-cfg "Display" "Oba")) 
 
-  (setq prefix_list (geocad-get-existing-prefixes)) 
-  (setq prefix_list (cons "--- WSZYSTKIE W RYSUNKU ---" prefix_list)) 
+  (setq prefix (geocad-trim-string prefix))
+
+  (if (= prefix "")
+    (setq prefix "POMIAR")
+  )
+  
+  (setq prefix_list (geocad-get-existing-prefixes))
+  
+  ;; Aktualnie zapisany Prefix tez pokazujemy jako grupe,
+  ;; nawet jezeli jeszcze nie ma dla niego warstw ani blokow.
+  (setq prefix_list (geocad-add-unique-string prefix prefix_list))
+  
+  (setq prefix_list (cons "--- WSZYSTKIE W RYSUNKU ---" prefix_list))
 
   (setq dcl-file (vl-filename-mktemp "geosetup.dcl") dcl-fn (open dcl-file "w")) 
   (write-line "GeoSetup : dialog { label = \"Ustawienia Globalne Pikiet (Mozg)\";" dcl-fn) 
@@ -462,11 +551,11 @@
        
       (setq prefix (geocad-trim-string prefix))
       (setq pikt_pref (geocad-trim-string pikt_pref))
-      
+
       (if (= prefix "")
         (setq prefix "POMIAR")
       )
-      
+
       (vl-registry-write *geocad-registry-path* "Styl" styl)
       (vl-registry-write *geocad-registry-path* "Display" display)
       (vl-registry-write *geocad-registry-path* "TxtH" txt-h)
