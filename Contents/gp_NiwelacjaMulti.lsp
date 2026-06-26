@@ -87,11 +87,18 @@
 
 
 ;; --- FUNKCJA POMOCNICZA: Czy krzywa jest zamknieta ---
-(defun geocad-multi-closed-curve-p (crvObj / typ res sp ep)
+(defun geocad-multi-closed-curve-p (crvObj / typ has-closed-prop res sp ep)
   (setq typ
     (vl-catch-all-apply
       'vla-get-ObjectName
       (list crvObj)
+    )
+  )
+
+  (setq has-closed-prop
+    (vl-catch-all-apply
+      'vlax-property-available-p
+      (list crvObj 'Closed)
     )
   )
 
@@ -100,7 +107,7 @@
       T
     )
 
-    ((vlax-property-available-p crvObj 'Closed)
+    ((and (not (vl-catch-all-error-p has-closed-prop)) has-closed-prop)
       (setq res
         (vl-catch-all-apply
           'vla-get-Closed
@@ -110,7 +117,10 @@
 
       (and
         (not (vl-catch-all-error-p res))
-        (= res :vlax-true)
+        (or
+          (= res :vlax-true)
+          (= res -1)
+        )
       )
     )
 
@@ -268,6 +278,228 @@
           )
         )
       )
+    )
+  )
+)
+
+
+
+;; --- FUNKCJA POMOCNICZA: Czy wartosc jest obiektem VLA ---
+(defun geocad-multi-vla-object-p (val)
+  ;; Lokalny zamiennik kontroli typu bez uzywania vlax-objectp.
+  ;; W niektorych srodowiskach AutoLISP symbol vlax-objectp bywa niedostepny.
+  (and
+    val
+    (not (vl-catch-all-error-p val))
+    (= (type val) 'VLA-OBJECT)
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Punkt z Z=0 ---
+(defun geocad-multi-point-z0 (pt)
+  (if
+    (and
+      pt
+      (listp pt)
+      (numberp (car pt))
+      (numberp (cadr pt))
+    )
+    (list (car pt) (cadr pt) 0.0)
+    pt
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Ustawienie / dodanie kodu DXF ---
+(defun geocad-multi-dxf-set (edata code value / pair)
+  (setq pair (assoc code edata))
+
+  (if pair
+    (subst (cons code value) pair edata)
+    (append edata (list (cons code value)))
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Splaszczenie skopiowanej osi do XY ---
+(defun geocad-multi-flatten-entity-to-xy
+  (
+    en
+    /
+    ed typ
+    p10 p11
+    v vdata
+  )
+
+  ;; Splaszcza tylko kopie robocza osi, nigdy oryginalu uzytkownika.
+  ;;
+  ;; Obslugiwane typowe przypadki pracy:
+  ;; - LINE,
+  ;; - ARC,
+  ;; - CIRCLE,
+  ;; - ELLIPSE,
+  ;; - LWPOLYLINE po JOIN, z zachowaniem bulge,
+  ;; - POLYLINE / 3DPOLY przez splaszczenie wierzcholkow.
+  ;;
+  ;; Zwraca T, jezeli wykonano kontrolowane flattenowanie.
+  (if (not en)
+    nil
+
+    (progn
+      (setq ed (entget en))
+      (setq typ (cdr (assoc 0 ed)))
+
+      (cond
+        ((= typ "LINE")
+          (setq p10 (cdr (assoc 10 ed)))
+          (setq p11 (cdr (assoc 11 ed)))
+
+          (setq ed (geocad-multi-dxf-set ed 10 (geocad-multi-point-z0 p10)))
+          (setq ed (geocad-multi-dxf-set ed 11 (geocad-multi-point-z0 p11)))
+
+          (entmod ed)
+          (entupd en)
+          T
+        )
+
+        ((member typ '("ARC" "CIRCLE"))
+          (setq p10 (cdr (assoc 10 ed)))
+
+          (setq ed (geocad-multi-dxf-set ed 10 (geocad-multi-point-z0 p10)))
+          (setq ed (geocad-multi-dxf-set ed 210 '(0.0 0.0 1.0)))
+
+          (entmod ed)
+          (entupd en)
+          T
+        )
+
+        ((= typ "ELLIPSE")
+          (setq p10 (cdr (assoc 10 ed)))
+          (setq p11 (cdr (assoc 11 ed)))
+
+          (setq ed (geocad-multi-dxf-set ed 10 (geocad-multi-point-z0 p10)))
+          (setq ed (geocad-multi-dxf-set ed 11 (geocad-multi-point-z0 p11)))
+          (setq ed (geocad-multi-dxf-set ed 210 '(0.0 0.0 1.0)))
+
+          (entmod ed)
+          (entupd en)
+          T
+        )
+
+        ((= typ "LWPOLYLINE")
+          ;; LWPOLYLINE przechowuje wierzcholki jako XY + elevation.
+          ;; Zerujemy elevation i normal, a bulge lukow zostaje bez zmian.
+          (setq ed (geocad-multi-dxf-set ed 38 0.0))
+          (setq ed (geocad-multi-dxf-set ed 210 '(0.0 0.0 1.0)))
+
+          (entmod ed)
+          (entupd en)
+          T
+        )
+
+        ((= typ "POLYLINE")
+          ;; Dla starej POLYLINE / 3DPOLY splaszczamy wszystkie VERTEX.
+          (setq ed (geocad-multi-dxf-set ed 10 '(0.0 0.0 0.0)))
+          (setq ed (geocad-multi-dxf-set ed 30 0.0))
+          (setq ed (geocad-multi-dxf-set ed 210 '(0.0 0.0 1.0)))
+
+          (entmod ed)
+
+          (setq v (entnext en))
+
+          (while
+            (and
+              v
+              (/= (cdr (assoc 0 (entget v))) "SEQEND")
+            )
+            (setq vdata (entget v))
+
+            (if (= (cdr (assoc 0 vdata)) "VERTEX")
+              (progn
+                (setq p10 (cdr (assoc 10 vdata)))
+                (setq vdata (geocad-multi-dxf-set vdata 10 (geocad-multi-point-z0 p10)))
+                (setq vdata (geocad-multi-dxf-set vdata 30 0.0))
+                (entmod vdata)
+              )
+            )
+
+            (setq v (entnext v))
+          )
+
+          (entupd en)
+          T
+        )
+
+        (T
+          ;; Nie robimy cichego pseudo-flatten dla nietypowej geometrii,
+          ;; bo NIWELACJA_MULTI ma liczyc po pewnej osi 2D.
+          nil
+        )
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Utworzenie roboczej osi 2D ---
+(defun geocad-multi-create-flat-curve-copy
+  (
+    crvObj
+    /
+    copy-res flatObj en ok
+  )
+
+  ;; Tworzy tymczasowa kopie osi i splaszcza ja do XY.
+  ;; Wszystkie rzutowania, pikietaze i dlugosci w NIWELACJA_MULTI
+  ;; powinny isc po tej kopii, nie po oryginalnym obiekcie.
+  (setq copy-res
+    (vl-catch-all-apply
+      'vla-Copy
+      (list crvObj)
+    )
+  )
+
+  (if
+    (or
+      (vl-catch-all-error-p copy-res)
+      (not (geocad-multi-vla-object-p copy-res))
+    )
+    nil
+
+    (progn
+      (setq flatObj copy-res)
+      (setq en (vlax-vla-object->ename flatObj))
+      (setq ok (geocad-multi-flatten-entity-to-xy en))
+
+      (if
+        (and
+          ok
+          (geocad-multi-valid-curve-p flatObj)
+        )
+        (progn
+          ;; Ukrywamy kopie robocza, ale zostaje dostepna dla vlax-curve.
+          ;; Jezeli AutoCAD odmowi ukrycia, to i tak zostanie usunieta po komendzie.
+          (vl-catch-all-apply 'vla-put-Visible (list flatObj :vlax-false))
+          flatObj
+        )
+
+        (progn
+          (vl-catch-all-apply 'vla-Delete (list flatObj))
+          nil
+        )
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Usuniecie roboczej osi 2D ---
+(defun geocad-multi-delete-flat-curve-copy (flatObj)
+  (if (geocad-multi-vla-object-p flatObj)
+    (vl-catch-all-apply
+      'vla-Delete
+      (list flatObj)
     )
   )
 )
@@ -629,18 +861,17 @@
     crvObj pt
     /
     p-proj L-base gap
-    param-res deriv-res
-    deriv len
-    Ux Uy vx vy dot L-virt
   )
 
-  ;; Logika zgodna z dotychczasowym MULTI:
-  ;; - najblizszy punkt na osi,
-  ;; - pikietaz L-base,
-  ;; - korekta L-virt po stycznej, jezeli punkt minimalnie nie lezy na osi.
+  ;; Logika 2D/XY:
+  ;; - crvObj powinien byc robocza, splaszczona kopia osi,
+  ;; - punkt bazowy jest rzutowany po XY na najblizszy punkt osi,
+  ;; - pikietaz L bierzemy z rzutu na osi,
+  ;; - rzedna Z zostaje z oryginalnego punktu bazowego.
   ;;
-  ;; Roznica: wszystkie wywolania krzywej sa zabezpieczone, bo automat
-  ;; skanuje rysunek i musi ignorowac obiekty nietypowe zamiast wywalac komende.
+  ;; Celowo NIE ma juz korekty L po stycznej.
+  ;; Najkrotsze doklejenie punktu do osi to normalna/rzut XY,
+  ;; a nie przesuniecie pikietazu po stycznej.
   (setq p-proj (geocad-multi-safe-closest-point crvObj pt))
 
   (if p-proj
@@ -649,71 +880,9 @@
       (setq gap (geocad-multi-distance-xy pt p-proj))
 
       (if (and (numberp L-base) (numberp gap))
-        (progn
-          (setq L-virt L-base)
-
-          (if (> gap 0.001)
-            (progn
-              (setq param-res
-                (vl-catch-all-apply
-                  'vlax-curve-getParamAtPoint
-                  (list crvObj p-proj)
-                )
-              )
-
-              (if (and (not (vl-catch-all-error-p param-res)) (numberp param-res))
-                (progn
-                  (setq deriv-res
-                    (vl-catch-all-apply
-                      'vlax-curve-getFirstDeriv
-                      (list crvObj param-res)
-                    )
-                  )
-
-                  (if
-                    (and
-                      (not (vl-catch-all-error-p deriv-res))
-                      deriv-res
-                      (numberp (car deriv-res))
-                      (numberp (cadr deriv-res))
-                    )
-                    (progn
-                      (setq deriv deriv-res)
-
-                      (setq len
-                        (distance
-                          '(0.0 0.0)
-                          (list (car deriv) (cadr deriv))
-                        )
-                      )
-
-                      (if (> len 0.0000001)
-                        (progn
-                          (setq Ux (/ (car deriv) len))
-                          (setq Uy (/ (cadr deriv) len))
-
-                          (setq vx (- (car pt) (car p-proj)))
-                          (setq vy (- (cadr pt) (cadr p-proj)))
-
-                          (setq dot (+ (* vx Ux) (* vy Uy)))
-                          (setq L-virt (+ L-base dot))
-                        )
-                      )
-                    )
-                  )
-                )
-              )
-            )
-          )
-
-          ;; Zwracamy:
-          ;; (pikietaz rzedna_Z odleglosc_XY_od_osi)
-          (if (numberp L-virt)
-            (list L-virt (caddr pt) gap)
-            nil
-          )
-        )
-
+        ;; Zwracamy:
+        ;; (pikietaz_z_rzutu_XY rzedna_Z_z_punktu odleglosc_XY_od_osi)
+        (list L-base (caddr pt) gap)
         nil
       )
     )
@@ -1264,7 +1433,7 @@
   (
     /
     old-err old-osmode old-cmdecho old-clayer
-    crvEnt crvObj ss
+    crvEnt crvObj flatCrvObj ss
     valid-nodes generation-nodes
     auto-valid-records auto-selected-records
     auto-result selected-result manual-result manual-records manual-selected-records
@@ -1293,6 +1462,13 @@
             (progn
               (setq batch (geocad-pikieta-batch-end batch))
               (setq batch nil)
+            )
+          )
+
+          (if flatCrvObj
+            (progn
+              (geocad-multi-delete-flat-curve-copy flatCrvObj)
+              (setq flatCrvObj nil)
             )
           )
 
@@ -1345,8 +1521,26 @@
     )
   )
 
+  ;; Do obliczen NIWELACJA_MULTI uzywamy roboczej osi 2D.
+  ;; Oryginalny obiekt uzytkownika nie jest modyfikowany.
+  (setq flatCrvObj (geocad-multi-create-flat-curve-copy crvObj))
+
+  (if (not flatCrvObj)
+    (progn
+      (alert
+        "Nie udalo sie utworzyc roboczej osi 2D. Wybierz linie, luk albo polilinie mozliwa do splaszczenia."
+      )
+      (exit)
+    )
+  )
+
+  ;; Od tego miejsca cala geometria pracuje na splaszczonej kopii XY.
+  (setq crvObj flatCrvObj)
+
   (setq total-len (geocad-multi-curve-total-length crvObj))
   (setq closed-curve (geocad-multi-closed-curve-p crvObj))
+
+  (princ "\nUtworzono robocza os 2D XY do rzutowania i liczenia pikietazu.")
 
   (if closed-curve
     (princ "\nWykryto zamknieta os trasy - wlaczono obsluge przejscia przez poczatek/koniec polilinii.")
@@ -1558,7 +1752,7 @@
     )
   )
 
-  ;; Sortowanie po pikietazu L-virt od najmniejszego do najwiekszego.
+  ;; Sortowanie po pikietazu rzutu XY od najmniejszego do najwiekszego.
   (setq valid-nodes
     (vl-sort
       valid-nodes
@@ -1975,6 +2169,13 @@
 
   (if old-clayer
     (vl-catch-all-apply 'setvar (list "CLAYER" old-clayer))
+  )
+
+  (if flatCrvObj
+    (progn
+      (geocad-multi-delete-flat-curve-copy flatCrvObj)
+      (setq flatCrvObj nil)
+    )
   )
 
   (setq *error* old-err)
