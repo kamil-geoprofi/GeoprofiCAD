@@ -58,11 +58,13 @@
 ;; --- FUNKCJA POMOCNICZA: Warstwa dla polilinii z NIWELACJA_MULTI ---
 (defun geocad-multi-get-polyline-layer (doc / prefix color layname)
   ;; Prefix pobierany z Geo Menedzera:
-  ;; Prefix + "_POLYLINES_FROM_MULTI"
+  ;; Prefix + standardowy sufiks warstwy polilinii MULTI.
   (setq prefix (geocad-get-cfg "Prefix" "POMIAR"))
   (setq color (atoi (geocad-get-cfg "Color" "3")))
 
-  (setq layname (strcat prefix "_POLYLINES_FROM_MULTI"))
+  (setq layname
+    (geocad-layer-name prefix *geocad-layer-type-polyline-multi*)
+  )
 
   (geocad-multi-ensure-layer doc layname color)
 )

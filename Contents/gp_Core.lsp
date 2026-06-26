@@ -1,4 +1,5 @@
 (vl-load-com)
+(load "gp_Config.lsp" "\nBLAD: Nie znaleziono pliku gp_Config.lsp!")
 
 ;; ======================================================
 ;; POMOCNICZE: PARSOWANIE TAGÓW I KONFIGURACJA
@@ -19,8 +20,15 @@
 )
 
 (defun geocad-get-cfg (klucz domyslny / val)
-  (setq val (vl-registry-read "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" klucz))
-  (if (not val) (progn (vl-registry-write "HKEY_CURRENT_USER\\Software\\GeoCadSkrypty" klucz domyslny) domyslny) val)
+  (setq val (vl-registry-read *geocad-registry-path* klucz))
+
+  (if (not val)
+    (progn
+      (vl-registry-write *geocad-registry-path* klucz domyslny)
+      domyslny
+    )
+    val
+  )
 )
 
 ;; ======================================================
@@ -133,7 +141,11 @@
   (setq pt-3d (vlax-3d-point pt-list)) 
   (setq z-str (rtos pz 2 z-prec)) 
 
-  (setq lay-obj (vla-get-Layers doc) lay-pt (strcat prefix "_PIKIETY") lay-nr (strcat prefix "_ETYKIETA_NR") lay-h (strcat prefix "_ETYKIETA_H")) 
+  (setq lay-obj (vla-get-Layers doc)
+      lay-pt (geocad-layer-name prefix *geocad-layer-type-points*)
+      lay-nr (geocad-layer-name prefix *geocad-layer-type-label-nr*)
+      lay-h  (geocad-layer-name prefix *geocad-layer-type-label-h*)
+  ) 
   (vla-put-color (vla-add lay-obj lay-pt) kolor)     
   (vla-put-color (vla-add lay-obj lay-nr) kolor)    
   (vla-put-color (vla-add lay-obj lay-h) kolor) 
