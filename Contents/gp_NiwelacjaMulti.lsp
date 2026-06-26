@@ -999,6 +999,110 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Statystyki rekordow dla jednej warstwy ---
+(defun geocad-multi-layer-record-stats
+  (
+    records layer
+    /
+    cnt rec rec-layer
+    L Z
+    min-L max-L min-Z max-Z
+  )
+
+  ;; Zwraca:
+  ;; (ilosc min-L max-L min-Z max-Z)
+  (setq cnt 0)
+  (setq min-L nil)
+  (setq max-L nil)
+  (setq min-Z nil)
+  (setq max-Z nil)
+
+  (foreach rec records
+    (setq rec-layer (geocad-multi-record-layer rec))
+
+    (if (= (strcase rec-layer) (strcase layer))
+      (progn
+        (setq L (car rec))
+        (setq Z (cadr rec))
+
+        (if (and (numberp L) (numberp Z))
+          (progn
+            (setq cnt (1+ cnt))
+
+            (if (or (not min-L) (< L min-L))
+              (setq min-L L)
+            )
+
+            (if (or (not max-L) (> L max-L))
+              (setq max-L L)
+            )
+
+            (if (or (not min-Z) (< Z min-Z))
+              (setq min-Z Z)
+            )
+
+            (if (or (not max-Z) (> Z max-Z))
+              (setq max-Z Z)
+            )
+          )
+        )
+      )
+    )
+  )
+
+  (list cnt min-L max-L min-Z max-Z)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Formatowanie zakresu liczbowego ---
+(defun geocad-multi-format-range (a b precision)
+  (if
+    (and
+      (numberp a)
+      (numberp b)
+    )
+    (strcat
+      (rtos a 2 precision)
+      " - "
+      (rtos b 2 precision)
+    )
+    "brak danych"
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Wypis jednej pozycji wyboru warstwy ---
+(defun geocad-multi-print-layer-choice-line
+  (
+    idx records layer
+    /
+    stats cnt min-L max-L min-Z max-Z
+  )
+
+  (setq stats (geocad-multi-layer-record-stats records layer))
+  (setq cnt (nth 0 stats))
+  (setq min-L (nth 1 stats))
+  (setq max-L (nth 2 stats))
+  (setq min-Z (nth 3 stats))
+  (setq max-Z (nth 4 stats))
+
+  (princ
+    (strcat
+      "\n\n["
+      (itoa idx)
+      "] "
+      layer
+      "\n    punkty: "
+      (itoa cnt)
+      "\n    pikietaz: "
+      (geocad-multi-format-range min-L max-L 3)
+      "\n    Z: "
+      (geocad-multi-format-range min-Z max-Z 3)
+    )
+  )
+)
+
+
 ;; --- FUNKCJA POMOCNICZA: Wybor warstwy z rekordow ---
 (defun geocad-multi-select-records-by-layer
   (
@@ -1007,6 +1111,7 @@
     layers total
     idx layer count
     choice selected-records selected-label
+    prompt
   )
 
   ;; Jezeli znaleziono pikiety na kilku warstwach,
@@ -1034,9 +1139,21 @@
         (strcat
           "\n"
           source-label
-          ": wszystkie wykryte punkty sa na warstwie: "
+          ": wykryto jedna warstwe punktow bazowych."
+        )
+      )
+
+      (if layers
+        (geocad-multi-print-layer-choice-line 1 records selected-label)
+      )
+
+      (princ
+        (strcat
+          "\n\nWybor warstwy: "
           selected-label
-          "."
+          " ("
+          (itoa total)
+          " punktow)."
         )
       )
 
@@ -1048,44 +1165,37 @@
         (strcat
           "\n"
           source-label
-          ": wykryto pikiety bazowe na kilku warstwach:"
-        )
-      )
-
-      (princ
-        (strcat
-          "\n0. Wszystkie warstwy ("
-          (itoa total)
-          ")"
+          ": wykryto punkty bazowe na kilku warstwach:"
         )
       )
 
       (setq idx 1)
 
       (foreach layer layers
-        (setq count (geocad-multi-count-records-on-layer records layer))
-
-        (princ
-          (strcat
-            "\n"
-            (itoa idx)
-            ". "
-            layer
-            " ("
-            (itoa count)
-            ")"
-          )
-        )
-
+        (geocad-multi-print-layer-choice-line idx records layer)
         (setq idx (1+ idx))
+      )
+
+      (princ
+        (strcat
+          "\n\n[0] Wszystkie warstwy"
+          "\n    punkty: "
+          (itoa total)
+        )
+      )
+
+      (setq prompt
+        (strcat
+          "\n\nWybierz warstwe punktow bazowych [1-"
+          (itoa (length layers))
+          "] albo 0 = Wszystkie: "
+        )
       )
 
       (setq choice nil)
 
       (while (not choice)
-        (setq choice
-          (getint "\nWybierz warstwe pikiet <0 = Wszystkie>: ")
-        )
+        (setq choice (getint prompt))
 
         (if (not choice)
           (setq choice 0)
@@ -1100,7 +1210,13 @@
             )
           )
           (progn
-            (princ "\nNiepoprawny wybor warstwy.")
+            (princ
+              (strcat
+                "\nNiepoprawny wybor. Wpisz liczbe od 0 do "
+                (itoa (length layers))
+                "."
+              )
+            )
             (setq choice nil)
           )
         )
