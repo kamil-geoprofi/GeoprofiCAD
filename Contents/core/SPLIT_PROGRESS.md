@@ -1,33 +1,40 @@
 # Split progress
 
-## Zrobione w tym etapie
+## Aktualny stan
 
-- Utworzono stabilny loader `Contents/gp_Core.lsp`.
-- Utworzono runtime/orchestrator `Contents/core/gp_CoreRuntime.lsp`.
-- Przeniesiono pelny dotychczasowy core do `Contents/core/gp_CoreLegacy.lsp`.
-- Utworzono docelowe moduly:
-  - `gp_ProjectMemory.lsp`
-  - `gp_Numbering.lsp`
-  - `gp_CadObjects.lsp`
-  - `gp_PikietaFactory.lsp`
-  - `gp_PikietaStyle.lsp`
-  - `ui/gp_SetupDialog.lsp`
-- Dodano je do `PackageContents.xml` po legacy.
-- `gp_ProjectMemory.lsp` zawiera juz rzeczywiste definicje konfiguracji i LDATA.
-- Pozostale moduly maja mapy API i markery ladowania, ale definicje funkcji nadal sa w legacy.
+Refaktor jest nadal w trybie `shadow split`:
 
-## Dlaczego tak
+- `Contents/gp_Core.lsp` jest stabilnym loaderem kompatybilnosci.
+- `Contents/core/gp_CoreRuntime.lsp` jest malym runtime/orchestrator markerem.
+- `Contents/core/gp_CoreLegacy.lsp` nadal zawiera pelna stara implementacje i jest ladowany jako bufor bezpieczenstwa.
+- Nowe moduly sa ladowane po legacy i moga nadpisywac wybrane definicje bez zmiany publicznego API.
 
-To zabezpiecza ladowanie bundle i pozwala testowac strukture przed wycinaniem definicji z legacy. Po potwierdzeniu, ze AutoCAD laduje wszystkie nowe pliki, nastepny etap to przenoszenie funkcji modul po module.
+## Realnie wydzielone moduly core
 
-## Nastepny krok
+- `Contents/core/gp_ProjectMemory.lsp` — LDATA, konfiguracja DWG, `geocad-get-cfg`, `geocad-set-cfg`.
+- `Contents/core/gp_Numbering.lsp` — prefixy numeracji, liczniki, `GP:PobierzNastepnyNumer`.
+- `Contents/core/gp_CadObjects.lsp` — helpery AutoCAD/VLAX, punkty, teksty, nearest text.
+- `Contents/core/gp_PikietaFactory.lsp` — tworzenie bloku, kontekst, batch insert pikiet.
+- `Contents/core/gp_PikietaStyle.lsp` — konwersje Blok/Tekst i update istniejacych pikiet.
 
-Przeniesc definicje funkcji do:
+## Realnie wydzielone moduly UI
 
-1. `gp_Numbering.lsp`
-2. `gp_CadObjects.lsp`
-3. `gp_PikietaFactory.lsp`
-4. `gp_PikietaStyle.lsp`
-5. `ui/gp_SetupDialog.lsp`
+- `Contents/ui/gp_SetupDialog.lsp` — podstawowe helpery UI oraz `c:GEO_SETUP`.
+- `Contents/ui/gp_SetupAutosave.lsp` — autosave/walidacja `txt_h`, `z_prec`, stylu, widocznosci i koloru.
+- `Contents/ui/gp_SetupPrefix.lsp` — prefixy numeracji w `GEO_SETUP`.
+- `Contents/ui/gp_SetupGroup.lsp` — ladowanie grupy, tworzenie grupy, dialog nowego prefixu.
+- `Contents/ui/gp_SetupMain.lsp` — pomocniczy helper glownego okna, na razie bez pelnego `geocad-setup-show-main-dialog`.
 
-Dopiero po testach odchudzac albo usuwac `gp_CoreLegacy.lsp`.
+## Celowo jeszcze nie przeniesione w pelni
+
+- `geocad-setup-show-main-dialog` — najwiekszy i najbardziej kruchy fragment UI/DCL. Zostaje w legacy do osobnego kroku albo do momentu, gdy bedzie czas na test po tej zmianie.
+- Cleanup `gp_CoreLegacy.lsp` — jeszcze nie robiony.
+- Optymalizacja konwersji Blok/Tekst — jeszcze nie robiona.
+- Radar tekstow z eksportu — jeszcze nie przeniesiony.
+
+## Zasada dalszych zmian
+
+1. Najpierw shadow split bez zmiany logiki.
+2. Potem test AutoCAD.
+3. Dopiero potem cleanup legacy.
+4. Dopiero po cleanupie optymalizacje `ssget` i konwersji.
