@@ -27,19 +27,4 @@
   )
 )
 
-(defun c:GEOCAD_SPLIT_STATUS ()
-  (princ "\nGEOPROFICAD CORE SPLIT STATUS:")
-  (foreach item (geocad-core-split-status)
-    (princ
-      (strcat
-        "\n - "
-        (car item)
-        ": "
-        (if (cdr item) "loaded" "not loaded")
-      )
-    )
-  )
-  (princ)
-)
-
 (princ)
