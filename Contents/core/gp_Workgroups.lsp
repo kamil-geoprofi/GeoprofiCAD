@@ -50,6 +50,15 @@
   (if val val default)
 )
 
+
+(defun geocad-group-type (prefix)
+  (geocad-group-cfg-read prefix "GroupType" "generated")
+)
+
+(defun geocad-imported-group-p (prefix)
+  (= (strcase (geocad-group-type prefix)) "IMPORTED")
+)
+
 (defun geocad-group-cfg-write (prefix key value)
   (if
     (and
@@ -101,6 +110,9 @@
       (geocad-group-cfg-write pref "Display" display)
       (geocad-group-cfg-write pref "TxtH" txt-h)
       (geocad-group-cfg-write pref "Prec" z-prec)
+      (if (not (geocad-group-cfg-read pref "GroupType" nil))
+        (geocad-group-cfg-write pref "GroupType" "generated")
+      )
       (geocad-save-known-pikt-prefix-for-group pref pikt_pref)
     )
   )

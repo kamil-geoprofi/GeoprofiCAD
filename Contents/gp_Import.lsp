@@ -72,11 +72,82 @@
 (defun guess-format-multi (lines delim-code / guesses vote max-vote best-guess count) (setq guesses '()) (foreach line lines (setq vote (guess-single-line (safe-tokenize line delim-code))) (if vote (setq guesses (cons vote guesses)))) (if guesses (progn (setq max-vote 0 best-guess "1") (foreach u '("1" "2" "3" "4" "5" "6") (setq count (length (vl-remove-if-not '(lambda (x) (= x u)) guesses))) (if (> count max-vote) (progn (setq max-vote count) (setq best-guess u)))) best-guess) "1"))  
 (defun round-to (val prec) (if (and val prec) (/ (fix (+ (* val (expt 10.0 prec)) 0.5)) (float (expt 10.0 prec))) val))
 
+(defun geocad-import-layer-token-from-file
+  (filename / base raw result i code ch prev-us)
+  ;; Nazwa grupy imported pochodzi z nazwy pliku, ale musi byc bezpieczna
+  ;; jako prefix warstw AutoCAD. Zostawiamy litery/cyfry, reszta -> "_".
+  (setq base (vl-filename-base filename))
+  (setq raw (strcase (if base base "IMPORT")))
+  (setq result "")
+  (setq prev-us nil)
+  (setq i 1)
+
+  (while (<= i (strlen raw))
+    (setq ch (substr raw i 1))
+    (setq code (ascii ch))
+    (if
+      (or
+        (and (>= code 48) (<= code 57))
+        (and (>= code 65) (<= code 90))
+      )
+      (progn
+        (setq result (strcat result ch))
+        (setq prev-us nil)
+      )
+      (if (not prev-us)
+        (progn
+          (setq result (strcat result "_"))
+          (setq prev-us T)
+        )
+      )
+    )
+    (setq i (1+ i))
+  )
+
+  (setq result (vl-string-trim "_" result))
+  (if (= result "")
+    (setq result "IMPORT")
+  )
+  result
+)
+
+(defun geocad-import-prepare-imported-group
+  (doc filename / base group kolor txt-h z-prec styl display)
+  ;; Import z nazwami z pliku dostaje wlasna grupe <NAZWA_PLIKU>_TXT.
+  ;; W tej grupie nie uzywamy prefixu numeracji pikiet - NR/H sa z pliku.
+  (setq base (geocad-import-layer-token-from-file filename))
+  (setq group (geocad-normalize-layer-prefix (strcat base "_TXT")))
+
+  (setq kolor (geocad-get-cfg "Color" "3"))
+  (setq txt-h (geocad-get-cfg "TxtH" "1.0"))
+  (setq z-prec (geocad-get-cfg "Prec" "2"))
+  (setq styl (geocad-get-cfg "Styl" "Blok"))
+  (setq display (geocad-get-cfg "Display" "Oba"))
+
+  (geocad-set-cfg "Prefix" group)
+  (geocad-set-cfg "PiktPrefix" "")
+  (geocad-save-group-settings
+    group
+    kolor
+    ""
+    styl
+    display
+    txt-h
+    z-prec
+    (geocad-get-cfg "ZTags" "H,Z,RZEDNA")
+  )
+  (geocad-group-cfg-write group "GroupType" "imported")
+  (geocad-group-cfg-write group "ImportFile" (vl-filename-base filename))
+
+  group
+)
+
+
 (defun c:IMPORT_POINTS_V3_7 ( / filename file line raw-line sample-lines format-choice is-flat final-delim  
                             px py pz pz-geom nr count valid acadObj doc mspace prec-geom-str prec-geom tokens  
                             total-valid current-valid idx-first idx-mid idx-last delim-code current-delim line-first line-mid line-last c1 c2 sys-info len current-format temp-delim dialog-running 
                             dcl-file dcl-fn dcl-id status minX minY maxX maxY dXX dYY margX margY marg p1 p2 
-                            c-nr c-x c-y c-z delim-str do-zoom use-file-nr file-has-nr old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z batch)
+                            c-nr c-x c-y c-z delim-str do-zoom use-file-nr file-has-nr old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z batch import-group)
   
   (setq old-err *error* *error* geocad-err) 
   (setq old-cmdecho (getvar "CMDECHO") old-attmode (getvar "ATTMODE") old-dimzin (getvar "DIMZIN") old-pdmode (getvar "PDMODE") old-pdsize (getvar "PDSIZE") old-osmode (getvar "OSMODE"))  
@@ -155,6 +226,20 @@
   
   (setq format-choice current-format) (if (= format-choice "7") (setq c-nr (atoi c-nr) c-x (atoi c-x) c-y (atoi c-y) c-z (atoi c-z))) 
   (setq prec-geom (if (= prec-geom-str "") nil (atoi prec-geom-str)))
+
+  (if
+    (and
+      (= use-file-nr "1")
+      (or
+        (member format-choice '("1" "2" "5" "6"))
+        (and (= format-choice "7") (> c-nr 0))
+      )
+    )
+    (progn
+      (setq import-group (geocad-import-prepare-imported-group doc filename))
+      (princ (strcat "\nImport z nazwami z pliku: utworzono/aktywowano grupe " import-group "."))
+    )
+  )
   
   (vla-StartUndoMark doc)
 
