@@ -1634,6 +1634,823 @@
   )
 )
 
+(defun geocad-safe-delete-object
+  (obj)
+  (if obj
+    (vl-catch-all-apply
+      'vla-Delete
+      (list obj)
+    )
+  )
+
+  nil
+)
+
+
+(defun geocad-object-point-list
+  (obj / obj-name)
+  (if obj
+    (progn
+      (setq obj-name (vla-get-ObjectName obj))
+
+      (cond
+        ((= obj-name "AcDbPoint")
+          (vlax-safearray->list
+            (vlax-variant-value
+              (vla-get-Coordinates obj)
+            )
+          )
+        )
+
+        (T
+          (vlax-safearray->list
+            (vlax-variant-value
+              (vla-get-InsertionPoint obj)
+            )
+          )
+        )
+      )
+    )
+    nil
+  )
+)
+
+
+(defun geocad-set-object-visible
+  (obj visible)
+  ;; Dziala dla TEXT/POINT/INSERT, jezeli obiekt wspiera wlasciwosc Visible.
+  ;; Jezeli dany obiekt jej nie wspiera, ignorujemy blad.
+  (if obj
+    (vl-catch-all-apply
+      'vla-put-Visible
+      (list
+        obj
+        (if visible :vlax-true :vlax-false)
+      )
+    )
+  )
+
+  obj
+)
+
+
+(defun geocad-text-string-or-empty
+  (obj / val)
+  (setq val "")
+
+  (if obj
+    (progn
+      (setq val
+        (vl-catch-all-apply
+          'vla-get-TextString
+          (list obj)
+        )
+      )
+
+      (if (vl-catch-all-error-p val)
+        (setq val "")
+      )
+    )
+  )
+
+  (if val val "")
+)
+
+
+(defun geocad-make-text-entity
+  (pt txt-h text-value layname visible / ent obj)
+  (if (not text-value)
+    (setq text-value "")
+  )
+
+  (setq ent
+    (entmakex
+      (list
+        '(0 . "TEXT")
+        (cons 10 pt)
+        (cons 40 txt-h)
+        (cons 1 text-value)
+        (cons 8 layname)
+      )
+    )
+  )
+
+  (if ent
+    (progn
+      (setq obj (vlax-ename->vla-object ent))
+      (geocad-set-object-visible obj visible)
+    )
+  )
+
+  ent
+)
+
+
+(defun geocad-make-point-entity
+  (pt layname)
+  (entmakex
+    (list
+      '(0 . "POINT")
+      (cons 10 pt)
+      (cons 8 layname)
+    )
+  )
+)
+
+
+(defun geocad-find-nearest-text-object
+  (layname target-pt tol / ss i obj pt d best best-d)
+  ;; Szuka najblizszego TEXT na podanej warstwie.
+  ;; Uzywane do parowania tekstow NR/H z punktem pikiety.
+  (setq best nil)
+  (setq best-d nil)
+
+  (if
+    (and
+      layname
+      (/= layname "")
+      target-pt
+      (tblsearch "LAYER" layname)
+    )
+    (progn
+      (setq ss
+        (ssget
+          "_X"
+          (list
+            '(0 . "TEXT")
+            (cons 8 layname)
+          )
+        )
+      )
+
+      (if ss
+        (progn
+          (setq i 0)
+
+          (while (< i (sslength ss))
+            (setq obj (vlax-ename->vla-object (ssname ss i)))
+            (setq pt (geocad-object-point-list obj))
+
+            (if pt
+              (progn
+                (setq d (distance pt target-pt))
+
+                (if
+                  (and
+                    (<= d tol)
+                    (or
+                      (not best-d)
+                      (< d best-d)
+                    )
+                  )
+                  (progn
+                    (setq best obj)
+                    (setq best-d d)
+                  )
+                )
+              )
+            )
+
+            (setq i (1+ i))
+          )
+        )
+      )
+    )
+  )
+
+  best
+)
+
+
+(defun geocad-update-text-object
+  (obj pt txt-h layname text-value visible)
+  (if obj
+    (progn
+      (vl-catch-all-apply
+        'vla-put-Layer
+        (list obj layname)
+      )
+
+      (vl-catch-all-apply
+        'vla-put-Height
+        (list obj txt-h)
+      )
+
+      (if text-value
+        (vl-catch-all-apply
+          'vla-put-TextString
+          (list obj text-value)
+        )
+      )
+
+      (vl-catch-all-apply
+        'vla-put-InsertionPoint
+        (list obj (vlax-3d-point pt))
+      )
+
+      (geocad-set-object-visible obj visible)
+    )
+  )
+
+  obj
+)
+
+
+(defun geocad-create-text-pikieta
+  (
+    pt-list nr-str txt-h z-prec display
+    lay-pt lay-nr lay-h
+    /
+    px py pz dX dY z-str show-nr show-h
+  )
+  ;; Tworzy wariant tekstowy pikiety:
+  ;; POINT + TEXT NR + TEXT H.
+  ;;
+  ;; Nowo tworzone pikiety tekstowe zawsze dostaja oba TEXT-y.
+  ;; Widocznosc sterujemy przez Visible, zeby pozniej dalo sie je odzyskac
+  ;; przy zmianie trybu widocznosci.
+
+  (if
+    (or
+      (not nr-str)
+      (= nr-str "")
+    )
+    (setq nr-str "---")
+  )
+
+  (setq px (car pt-list))
+  (setq py (cadr pt-list))
+  (setq pz (caddr pt-list))
+
+  (if (not pz)
+    (setq pz 0.0)
+  )
+
+  (setq pt-list (list px py pz))
+  (setq dX (* txt-h 1.2))
+  (setq dY (* txt-h 0.7))
+  (setq z-str (rtos pz 2 z-prec))
+
+  (setq show-nr
+    (if (member display '("Oba" "Numer"))
+      T
+      nil
+    )
+  )
+
+  (setq show-h
+    (if (member display '("Oba" "Rzedna"))
+      T
+      nil
+    )
+  )
+
+  (geocad-make-point-entity pt-list lay-pt)
+
+  (geocad-make-text-entity
+    (list (+ px dX) (+ py dY) pz)
+    txt-h
+    nr-str
+    lay-nr
+    show-nr
+  )
+
+  (geocad-make-text-entity
+    (list (+ px dX) (- py dY) pz)
+    txt-h
+    z-str
+    lay-h
+    show-h
+  )
+
+  T
+)
+
+
+(defun geocad-insert-pikieta-block-from-data
+  (
+    doc pt-list nr-str txt-h z-prec display
+    lay-pt lay-nr lay-h
+    /
+    space px py pz dX dY z-str pt-3d blkRef vis-nr vis-h tag
+  )
+  ;; Tworzy blok Pikieta_Geo z danych odczytanych z wariantu tekstowego.
+
+  (if
+    (or
+      (not nr-str)
+      (= nr-str "")
+    )
+    (setq nr-str "---")
+  )
+
+  (geocad-stworz-blok-pikieta)
+
+  (setq space (vla-get-ModelSpace doc))
+
+  (setq px (car pt-list))
+  (setq py (cadr pt-list))
+  (setq pz (caddr pt-list))
+
+  (if (not pz)
+    (setq pz 0.0)
+  )
+
+  (setq pt-list (list px py pz))
+  (setq pt-3d (vlax-3d-point pt-list))
+  (setq dX (* txt-h 1.2))
+  (setq dY (* txt-h 0.7))
+  (setq z-str (rtos pz 2 z-prec))
+
+  (setq vis-nr
+    (if (member display '("Oba" "Numer"))
+      :vlax-false
+      :vlax-true
+    )
+  )
+
+  (setq vis-h
+    (if (member display '("Oba" "Rzedna"))
+      :vlax-false
+      :vlax-true
+    )
+  )
+
+  (setq blkRef
+    (vla-InsertBlock
+      space
+      pt-3d
+      "Pikieta_Geo"
+      1.0
+      1.0
+      1.0
+      0.0
+    )
+  )
+
+  (vla-put-Layer blkRef lay-pt)
+
+  (foreach att (vlax-invoke blkRef 'GetAttributes)
+    (vla-put-Height att txt-h)
+    (setq tag (strcase (vla-get-TagString att)))
+
+    (cond
+      ((= tag "NR")
+        (vla-put-TextString att nr-str)
+        (vla-put-InsertionPoint
+          att
+          (vlax-3d-point (list (+ px dX) (+ py dY) pz))
+        )
+        (vla-put-Invisible att vis-nr)
+        (vla-put-Layer att lay-nr)
+      )
+
+      ((member tag '("H" "Z" "RZEDNA"))
+        (vla-put-TextString att z-str)
+        (vla-put-InsertionPoint
+          att
+          (vlax-3d-point (list (+ px dX) (- py dY) pz))
+        )
+        (vla-put-Invisible att vis-h)
+        (vla-put-Layer att lay-h)
+      )
+    )
+  )
+
+  blkRef
+)
+
+
+(defun geocad-convert-blocks-to-text
+  (
+    doc prefix kolor txt-h z-prec display
+    /
+    pref lay-pt lay-nr lay-h ss i obj pt nr count
+  )
+  ;; Konwersja:
+  ;; INSERT Pikieta_Geo -> POINT + TEXT + TEXT.
+
+  (setq pref (geocad-normalize-layer-prefix prefix))
+  (setq count 0)
+
+  (if (/= pref "")
+    (progn
+      (setq lay-pt (geocad-layer-name pref *geocad-layer-type-points*))
+      (setq lay-nr (geocad-layer-name pref *geocad-layer-type-label-nr*))
+      (setq lay-h  (geocad-layer-name pref *geocad-layer-type-label-h*))
+
+      (geocad-ensure-layer doc lay-pt kolor)
+      (geocad-ensure-layer doc lay-nr kolor)
+      (geocad-ensure-layer doc lay-h kolor)
+
+      (setq ss
+        (ssget
+          "_X"
+          (list
+            '(0 . "INSERT")
+            '(2 . "Pikieta_Geo")
+            (cons 8 lay-pt)
+          )
+        )
+      )
+
+      (if ss
+        (progn
+          (setq i 0)
+
+          (while (< i (sslength ss))
+            (setq obj (vlax-ename->vla-object (ssname ss i)))
+            (setq pt (geocad-object-point-list obj))
+            (setq nr (geocad-block-attr-text obj "NR"))
+
+            (if pt
+              (progn
+                (geocad-create-text-pikieta
+                  pt
+                  nr
+                  txt-h
+                  z-prec
+                  display
+                  lay-pt
+                  lay-nr
+                  lay-h
+                )
+
+                (geocad-safe-delete-object obj)
+                (setq count (1+ count))
+              )
+            )
+
+            (setq i (1+ i))
+          )
+        )
+      )
+    )
+  )
+
+  count
+)
+
+
+(defun geocad-convert-text-to-blocks
+  (
+    doc prefix kolor txt-h z-prec display
+    /
+    pref lay-pt lay-nr lay-h ss i pt-obj pt
+    px py pz dX dY tol nr-obj h-obj nr-str count
+  )
+  ;; Konwersja:
+  ;; POINT + TEXT + TEXT -> INSERT Pikieta_Geo.
+  ;;
+  ;; Uwaga:
+  ;; Jezeli stara tekstowa pikieta nie ma tekstu numeru,
+  ;; numeru nie da sie odtworzyc. Wtedy blok dostanie NR = "---".
+
+  (setq pref (geocad-normalize-layer-prefix prefix))
+  (setq count 0)
+
+  (if (/= pref "")
+    (progn
+      (setq lay-pt (geocad-layer-name pref *geocad-layer-type-points*))
+      (setq lay-nr (geocad-layer-name pref *geocad-layer-type-label-nr*))
+      (setq lay-h  (geocad-layer-name pref *geocad-layer-type-label-h*))
+
+      (geocad-ensure-layer doc lay-pt kolor)
+      (geocad-ensure-layer doc lay-nr kolor)
+      (geocad-ensure-layer doc lay-h kolor)
+
+      (geocad-stworz-blok-pikieta)
+
+      (setq ss
+        (ssget
+          "_X"
+          (list
+            '(0 . "POINT")
+            (cons 8 lay-pt)
+          )
+        )
+      )
+
+      (if ss
+        (progn
+          (setq i 0)
+
+          (while (< i (sslength ss))
+            (setq pt-obj (vlax-ename->vla-object (ssname ss i)))
+            (setq pt (geocad-object-point-list pt-obj))
+
+            (if pt
+              (progn
+                (setq px (car pt))
+                (setq py (cadr pt))
+                (setq pz (caddr pt))
+
+                (if (not pz)
+                  (setq pz 0.0)
+                )
+
+                (setq pt (list px py pz))
+                (setq dX (* txt-h 1.2))
+                (setq dY (* txt-h 0.7))
+
+                ;; Celowo dosc szeroka tolerancja, bo teksty mogly byc
+                ;; utworzone przy innej wysokosci tekstu.
+                (setq tol (max 1.0 (* txt-h 8.0)))
+
+                (setq nr-obj
+                  (geocad-find-nearest-text-object
+                    lay-nr
+                    (list (+ px dX) (+ py dY) pz)
+                    tol
+                  )
+                )
+
+                (setq h-obj
+                  (geocad-find-nearest-text-object
+                    lay-h
+                    (list (+ px dX) (- py dY) pz)
+                    tol
+                  )
+                )
+
+                (setq nr-str (geocad-text-string-or-empty nr-obj))
+
+                (if (= nr-str "")
+                  (setq nr-str "---")
+                )
+
+                (geocad-insert-pikieta-block-from-data
+                  doc
+                  pt
+                  nr-str
+                  txt-h
+                  z-prec
+                  display
+                  lay-pt
+                  lay-nr
+                  lay-h
+                )
+
+                (geocad-safe-delete-object nr-obj)
+                (geocad-safe-delete-object h-obj)
+                (geocad-safe-delete-object pt-obj)
+
+                (setq count (1+ count))
+              )
+            )
+
+            (setq i (1+ i))
+          )
+        )
+      )
+    )
+  )
+
+  count
+)
+
+
+(defun geocad-update-text-style-existing
+  (
+    doc prefix kolor txt-h z-prec display
+    /
+    pref lay-pt lay-nr lay-h ss i pt-obj pt
+    px py pz dX dY tol nr-obj h-obj nr-pt h-pt
+    show-nr show-h z-str count nr-str
+  )
+  ;; Aktualizuje istniejace pikiety tekstowe:
+  ;; POINT + TEXT NR + TEXT H.
+  ;;
+  ;; Nie konwertuje stylu. Tylko poprawia:
+  ;; - warstwy,
+  ;; - kolor warstw,
+  ;; - wysokosc tekstu,
+  ;; - pozycje tekstow,
+  ;; - widocznosc,
+  ;; - tekst rzednej.
+
+  (setq pref (geocad-normalize-layer-prefix prefix))
+  (setq count 0)
+
+  (if (/= pref "")
+    (progn
+      (setq lay-pt (geocad-layer-name pref *geocad-layer-type-points*))
+      (setq lay-nr (geocad-layer-name pref *geocad-layer-type-label-nr*))
+      (setq lay-h  (geocad-layer-name pref *geocad-layer-type-label-h*))
+
+      (geocad-ensure-layer doc lay-pt kolor)
+      (geocad-ensure-layer doc lay-nr kolor)
+      (geocad-ensure-layer doc lay-h kolor)
+
+      (geocad-update-managed-layer-colors doc pref kolor)
+
+      (setq show-nr
+        (if (member display '("Oba" "Numer"))
+          T
+          nil
+        )
+      )
+
+      (setq show-h
+        (if (member display '("Oba" "Rzedna"))
+          T
+          nil
+        )
+      )
+
+      (setq ss
+        (ssget
+          "_X"
+          (list
+            '(0 . "POINT")
+            (cons 8 lay-pt)
+          )
+        )
+      )
+
+      (if ss
+        (progn
+          (setq i 0)
+
+          (while (< i (sslength ss))
+            (setq pt-obj (vlax-ename->vla-object (ssname ss i)))
+            (setq pt (geocad-object-point-list pt-obj))
+
+            (if pt
+              (progn
+                (setq px (car pt))
+                (setq py (cadr pt))
+                (setq pz (caddr pt))
+
+                (if (not pz)
+                  (setq pz 0.0)
+                )
+
+                (setq pt (list px py pz))
+                (setq dX (* txt-h 1.2))
+                (setq dY (* txt-h 0.7))
+                (setq tol (max 1.0 (* txt-h 8.0)))
+
+                (setq nr-pt (list (+ px dX) (+ py dY) pz))
+                (setq h-pt  (list (+ px dX) (- py dY) pz))
+                (setq z-str (rtos pz 2 z-prec))
+
+                (vl-catch-all-apply
+                  'vla-put-Layer
+                  (list pt-obj lay-pt)
+                )
+
+                (setq nr-obj
+                  (geocad-find-nearest-text-object
+                    lay-nr
+                    nr-pt
+                    tol
+                  )
+                )
+
+                (setq h-obj
+                  (geocad-find-nearest-text-object
+                    lay-h
+                    h-pt
+                    tol
+                  )
+                )
+
+                (if nr-obj
+                  (progn
+                    (setq nr-str (geocad-text-string-or-empty nr-obj))
+
+                    (if (= nr-str "")
+                      (setq nr-str "---")
+                    )
+
+                    (geocad-update-text-object
+                      nr-obj
+                      nr-pt
+                      txt-h
+                      lay-nr
+                      nr-str
+                      show-nr
+                    )
+                  )
+                  (if show-nr
+                    (geocad-make-text-entity
+                      nr-pt
+                      txt-h
+                      "---"
+                      lay-nr
+                      T
+                    )
+                  )
+                )
+
+                (if h-obj
+                  (geocad-update-text-object
+                    h-obj
+                    h-pt
+                    txt-h
+                    lay-h
+                    z-str
+                    show-h
+                  )
+                  (geocad-make-text-entity
+                    h-pt
+                    txt-h
+                    z-str
+                    lay-h
+                    show-h
+                  )
+                )
+
+                (setq count (1+ count))
+              )
+            )
+
+            (setq i (1+ i))
+          )
+        )
+      )
+    )
+  )
+
+  count
+)
+
+
+(defun geocad-setup-apply-current-group-params
+  (
+    doc prefix kolor-str txt-h-str z-prec-str styl display
+    /
+    pref kolor txt-h z-prec
+  )
+  ;; Glowny auto-apply dla GEO_SETUP.
+  ;;
+  ;; Po kazdej realnej zmianie parametru:
+  ;; - zapis parametru robi funkcja autosave,
+  ;; - ta funkcja stosuje aktualny profil do obiektow aktywnej grupy.
+  ;;
+  ;; Styl = Tekst:
+  ;; - bloki sa konwertowane do POINT + TEXT,
+  ;; - istniejace tekstowe pikiety sa aktualizowane.
+  ;;
+  ;; Styl = Blok:
+  ;; - tekstowe pikiety sa konwertowane do blokow,
+  ;; - bloki sa aktualizowane przez istniejace geocad-update-existing.
+
+  (setq pref (geocad-normalize-layer-prefix prefix))
+
+  (if (= pref "")
+    (setq pref "POMIAR")
+  )
+
+  (setq kolor (atoi kolor-str))
+  (setq txt-h (atof txt-h-str))
+  (setq z-prec (atoi z-prec-str))
+
+  (if (= styl "Tekst")
+    (progn
+      (geocad-convert-blocks-to-text
+        doc
+        pref
+        kolor
+        txt-h
+        z-prec
+        display
+      )
+
+      (geocad-update-text-style-existing
+        doc
+        pref
+        kolor
+        txt-h
+        z-prec
+        display
+      )
+    )
+    (progn
+      (geocad-convert-text-to-blocks
+        doc
+        pref
+        kolor
+        txt-h
+        z-prec
+        display
+      )
+
+      (geocad-update-existing
+        doc
+        pref
+        kolor-str
+        txt-h-str
+        z-prec-str
+        display
+      )
+    )
+  )
+
+  T
+)
+
 
 (defun geocad-popup-color-index
   (kolor / n)
@@ -2200,7 +3017,7 @@
 
 
 (defun geocad-setup-try-save-txt-h
-  (group-prefix old-txt-h / raw norm val)
+  (doc group-prefix old-txt-h kolor z-prec styl display / raw norm val)
   (if
     (or
       (not old-txt-h)
@@ -2224,15 +3041,22 @@
     (progn
       (set_tile "txt_h" norm)
 
-      ;; Przy braku zmiany NIE ruszamy statusu pola.
-      ;; Dzieki temu poprzedni status typu:
-      ;; (Zmieniono 1.0 -> 1.2)
-      ;; zostaje widoczny.
       (if (/= norm old-txt-h)
         (progn
           (geocad-setup-save-group-param group-prefix "TxtH" norm)
+
+          (geocad-setup-apply-current-group-params
+            doc
+            group-prefix
+            kolor
+            norm
+            z-prec
+            styl
+            display
+          )
+
           (set_tile "txt_h_status" (strcat "(Zmieniono " old-txt-h " -> " norm ")"))
-          (set_tile "dirty_status" (strcat "ZAPISANO wysokosc tekstu dla grupy " group-prefix "."))
+          (set_tile "dirty_status" (strcat "ZAPISANO wysokosc tekstu i zaktualizowano grupe " group-prefix "."))
         )
       )
 
@@ -2243,7 +3067,7 @@
 
 
 (defun geocad-setup-try-save-z-prec
-  (group-prefix old-z-prec / raw norm val)
+  (doc group-prefix old-z-prec kolor txt-h styl display / raw norm val)
   (if
     (or
       (not old-z-prec)
@@ -2281,12 +3105,22 @@
           (setq norm (itoa val))
           (set_tile "z_prec" norm)
 
-          ;; Przy braku zmiany NIE ruszamy statusu pola.
           (if (/= norm old-z-prec)
             (progn
               (geocad-setup-save-group-param group-prefix "Prec" norm)
+
+              (geocad-setup-apply-current-group-params
+                doc
+                group-prefix
+                kolor
+                txt-h
+                norm
+                styl
+                display
+              )
+
               (set_tile "z_prec_status" (strcat "(Zmieniono " old-z-prec " -> " norm ")"))
-              (set_tile "dirty_status" (strcat "ZAPISANO precyzje Z dla grupy " group-prefix "."))
+              (set_tile "dirty_status" (strcat "ZAPISANO precyzje Z i zaktualizowano grupe " group-prefix "."))
             )
           )
 
@@ -2299,7 +3133,7 @@
 
 
 (defun geocad-setup-autosave-style
-  (group-prefix old-styl / idx new-styl)
+  (doc group-prefix old-styl kolor txt-h z-prec display / idx new-styl)
   (setq idx (get_tile "styl_rys"))
 
   (setq new-styl
@@ -2309,10 +3143,20 @@
     )
   )
 
-  ;; Przy braku zmiany NIE ruszamy statusu pola.
   (if (/= new-styl old-styl)
     (progn
       (geocad-setup-save-group-param group-prefix "Styl" new-styl)
+
+      (geocad-setup-apply-current-group-params
+        doc
+        group-prefix
+        kolor
+        txt-h
+        z-prec
+        new-styl
+        display
+      )
+
       (set_tile
         "styl_status"
         (strcat
@@ -2323,7 +3167,8 @@
           ")"
         )
       )
-      (set_tile "dirty_status" (strcat "ZAPISANO styl dla grupy " group-prefix "."))
+
+      (set_tile "dirty_status" (strcat "ZAPISANO styl i przekonwertowano grupe " group-prefix "."))
     )
   )
 
@@ -2332,14 +3177,24 @@
 
 
 (defun geocad-setup-autosave-display
-  (group-prefix old-display / idx new-display)
+  (doc group-prefix old-display kolor txt-h z-prec styl / idx new-display)
   (setq idx (get_tile "display_mode"))
   (setq new-display (geocad-display-from-popup-index idx))
 
-  ;; Przy braku zmiany NIE ruszamy statusu pola.
   (if (/= new-display old-display)
     (progn
       (geocad-setup-save-group-param group-prefix "Display" new-display)
+
+      (geocad-setup-apply-current-group-params
+        doc
+        group-prefix
+        kolor
+        txt-h
+        z-prec
+        styl
+        new-display
+      )
+
       (set_tile
         "display_status"
         (strcat
@@ -2350,7 +3205,8 @@
           ")"
         )
       )
-      (set_tile "dirty_status" (strcat "ZAPISANO widocznosc dla grupy " group-prefix "."))
+
+      (set_tile "dirty_status" (strcat "ZAPISANO widocznosc i zaktualizowano grupe " group-prefix "."))
     )
   )
 
@@ -2359,14 +3215,24 @@
 
 
 (defun geocad-setup-autosave-color
-  (group-prefix old-color / idx new-color)
+  (doc group-prefix old-color txt-h z-prec styl display / idx new-color)
   (setq idx (atoi (get_tile "kolor")))
   (setq new-color (itoa (1+ idx)))
 
-  ;; Przy braku zmiany NIE ruszamy statusu pola.
   (if (/= new-color old-color)
     (progn
       (geocad-setup-save-group-param group-prefix "Color" new-color)
+
+      (geocad-setup-apply-current-group-params
+        doc
+        group-prefix
+        new-color
+        txt-h
+        z-prec
+        styl
+        display
+      )
+
       (set_tile
         "kolor_status"
         (strcat
@@ -2377,7 +3243,8 @@
           ")"
         )
       )
-      (set_tile "dirty_status" (strcat "ZAPISANO kolor dla grupy " group-prefix "."))
+
+      (set_tile "dirty_status" (strcat "ZAPISANO kolor i zaktualizowano grupe " group-prefix "."))
     )
   )
 
@@ -3023,14 +3890,9 @@
   (write-line "    : text { key = \"dirty_status\"; label = \"Brak zmian.\"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
-  (write-line "  : boxed_column { label = \"Akcje\";" dcl-fn)
-  (write-line "    : text { label = \"Aktywna grupa, aktywny prefix i parametry zapisuja sie od razu.\"; }" dcl-fn)
-  (write-line "    : text { label = \"Przyciski ponizej aktualizuja istniejace obiekty w rysunku.\"; }" dcl-fn)
-  (write-line "  }" dcl-fn)
-
-  (write-line "  : row { alignment = centered;" dcl-fn)
-  (write-line "    : button { key = \"save_update\"; label = \"Aktualizuj te grupe\"; is_default = true; }" dcl-fn)
-  (write-line "    : button { key = \"save_update_all\"; label = \"Aktualizuj wszystkie grupy\"; }" dcl-fn)
+  (write-line "  : boxed_column { label = \"Zasada dzialania\";" dcl-fn)
+  (write-line "    : text { label = \"Zmiana parametru zapisuje ustawienie i od razu aktualizuje aktywna grupe.\"; }" dcl-fn)
+  (write-line "    : text { label = \"Zmiana stylu konwertuje istniejace pikiety aktywnej grupy.\"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
   (write-line "  : row { alignment = centered;" dcl-fn)
