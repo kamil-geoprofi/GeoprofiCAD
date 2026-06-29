@@ -1946,6 +1946,75 @@
 ;; ======================================================
 ;; INTERFEJS: GEO_SETUP
 ;; ======================================================
+(defun geocad-setup-save-dialog-values
+  (/ txt-h z-prec prefix pikt-pref z-tags kolor styl-idx disp-idx styl display)
+  ;; Zapisuje aktualne wartosci z otwartego okna GEO_SETUP,
+  ;; ale NIE zamyka dialogu.
+  ;;
+  ;; Zwraca liste:
+  ;; (prefix pikt-pref kolor txt-h z-prec styl display z-tags)
+
+  (setq txt-h (get_tile "txt_h"))
+  (setq z-prec (get_tile "z_prec"))
+  (setq prefix (get_tile "prefix"))
+  (setq pikt-pref (get_tile "pikt_pref"))
+  (setq z-tags (get_tile "z_tags"))
+  (setq kolor (itoa (1+ (atoi (get_tile "kolor")))))
+  (setq styl-idx (get_tile "styl_rys"))
+  (setq disp-idx (get_tile "display_mode"))
+
+  (setq styl
+    (if (= styl-idx "1")
+      "Tekst"
+      "Blok"
+    )
+  )
+
+  (setq display
+    (geocad-display-from-popup-index disp-idx)
+  )
+
+  ;; Prefix grupy jest zawsze czysta nazwa grupy.
+  ;; Jezeli ktos wpisze DROGI_PIKIETY, zapisze sie DROGI.
+  (setq prefix (geocad-normalize-layer-prefix prefix))
+  (setq pikt-pref (geocad-normalize-pikt-prefix pikt-pref))
+  (setq z-tags (geocad-trim-string z-tags))
+
+  (if (= prefix "")
+    (setq prefix "POMIAR")
+  )
+
+  ;; Po normalizacji pokazujemy w oknie faktyczna wartosc,
+  ;; zeby UI nie klamal.
+  (set_tile "prefix" prefix)
+  (set_tile "pikt_pref" pikt-pref)
+  (set_tile "z_tags" z-tags)
+
+  ;; Zapis aktywnego kontekstu DWG.
+  (geocad-set-cfg "Styl" styl)
+  (geocad-set-cfg "Display" display)
+  (geocad-set-cfg "TxtH" txt-h)
+  (geocad-set-cfg "Prec" z-prec)
+  (geocad-set-cfg "Prefix" prefix)
+  (geocad-set-cfg "PiktPrefix" pikt-pref)
+  (geocad-set-cfg "ZTags" z-tags)
+  (geocad-set-cfg "Color" kolor)
+
+  ;; Zapis pamieci grupy.
+  ;; Tu zapisuje sie tez ostatni prefix numeracji tej grupy.
+  (geocad-save-group-settings
+    prefix
+    kolor
+    pikt-pref
+    styl
+    display
+    txt-h
+    z-prec
+    z-tags
+  )
+
+  (list prefix pikt-pref kolor txt-h z-prec styl display z-tags)
+)
 
 (defun c:GEO_SETUP
   (
@@ -1960,6 +2029,7 @@
     pikt_prefix_select_prefixes pikt_prefix_select_display pikt_prefix_select_idx
     target_prefix
     dirty
+    save_result
   )
 
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
@@ -2206,7 +2276,7 @@
   ;; tylko zapis ustawien aktywnej grupy.
   (action_tile
     "save_only"
-    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)"
+    "(setq save_result (geocad-setup-save-dialog-values)) (setq prefix (nth 0 save_result)) (setq pikt_pref (nth 1 save_result)) (setq kolor (nth 2 save_result)) (setq txt-h (nth 3 save_result)) (setq z-prec (nth 4 save_result)) (setq styl (nth 5 save_result)) (setq display (nth 6 save_result)) (setq z_tags (nth 7 save_result)) (setq prefix_groups (geocad-get-existing-prefixes)) (setq prefix_groups (geocad-add-unique-prefix prefix prefix_groups)) (setq prefix_groups (vl-sort prefix_groups '<)) (setq prefix_select_prefixes (cons \"\" prefix_groups)) (setq prefix_select_display (cons *geocad-new-group-label* (geocad-build-prefix-display-list prefix_groups))) (start_list \"prefix_select\" 3) (mapcar 'add_list prefix_select_display) (end_list) (setq prefix_select_idx (geocad-index-of-string prefix prefix_select_prefixes)) (if (not prefix_select_idx) (setq prefix_select_idx 0)) (set_tile \"prefix_select\" (itoa prefix_select_idx)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq dirty nil) (set_tile \"dirty_status\" (strcat \"ZAPISANO - aktywna grupa: \" prefix \". Okno pozostaje otwarte.\"))"
   )
 
   ;; Status 2:
