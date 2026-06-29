@@ -9,16 +9,22 @@
 5. `Contents/core/gp_Numbering.lsp`
 6. `Contents/core/gp_CadObjects.lsp`
 7. `Contents/core/gp_Workgroups.lsp`
-8. `Contents/core/gp_PikietaFactory.lsp`
-9. `Contents/core/gp_PikietaStyle.lsp`
-10. `Contents/ui/gp_SetupDialog.lsp`
-11. `Contents/ui/gp_SetupAutosave.lsp`
-12. `Contents/ui/gp_SetupPrefix.lsp`
-13. `Contents/ui/gp_SetupGroup.lsp`
-14. `Contents/ui/gp_SetupMain.lsp`
-15. pozostale moduly funkcjonalne: import, export, wstawianie, niwelacje, siatka, usuwanie.
+8. `Contents/core/gp_TextRadar.lsp`
+9. `Contents/core/gp_PikietaFactory.lsp`
+10. `Contents/core/gp_PikietaStyle.lsp`
+11. `Contents/core/gp_PikietaStyleOptimized.lsp`
+12. `Contents/ui/gp_SetupDialog.lsp`
+13. `Contents/ui/gp_SetupAutosave.lsp`
+14. `Contents/ui/gp_SetupPrefix.lsp`
+15. `Contents/ui/gp_SetupGroup.lsp`
+16. `Contents/ui/gp_SetupMain.lsp`
+17. `Contents/gp_Import.lsp`
+18. `Contents/gp_Export.lsp`
+19. `Contents/core/gp_ExportRadarCompat.lsp`
+20. pozostale moduly funkcjonalne: wstawianie, niwelacje, siatka, usuwanie.
 
 `Contents/core/gp_CoreLegacy.lsp` nie jest juz ladowany z manifestu.
 Zostaje w repo jako kopia awaryjna do porownania albo szybkiego rollbacku.
 
-Po tym etapie AutoCAD powinien korzystac z realnych modulow `core/` i `ui/`, a nie z monolitu legacy.
+`gp_PikietaStyleOptimized.lsp` musi byc ladowany po `gp_PikietaStyle.lsp`, bo nadpisuje wybrane funkcje konwersji.
+`gp_ExportRadarCompat.lsp` musi byc ladowany po `gp_Export.lsp`, bo przekierowuje stare helpery eksportu na wspolny `gp_TextRadar.lsp`.
