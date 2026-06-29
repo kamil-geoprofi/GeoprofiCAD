@@ -1,7 +1,19 @@
 # GeoprofiCAD UI
 
-Docelowe miejsce dla kodu UI/DCL, przede wszystkim `GEO_SETUP`.
+Ten folder zawiera kod UI/DCL, przede wszystkim obsluge `GEO_SETUP`.
 
-Aktualnie `gp_SetupDialog.lsp` istnieje jako shell typu shadow split. Pelna implementacja `GEO_SETUP` nadal jest w `core/gp_CoreLegacy.lsp`, zeby nie ryzykowac znikniecia komendy podczas czystego podzialu.
+UI zostalo wydzielone z dawnego monolitu `gp_Core.lsp`. `gp_CoreLegacy.lsp` nie jest juz ladowany z `PackageContents.xml`, wiec `GEO_SETUP` dziala z modulow w tym folderze.
 
-Nastepny bezpieczny krok to przeniesienie funkcji `geocad-setup-*` oraz `c:GEO_SETUP` do `ui/gp_SetupDialog.lsp` bez zmiany logiki.
+## Moduly UI
+
+- `gp_SetupDialog.lsp` — podstawowe helpery UI oraz komenda `c:GEO_SETUP`.
+- `gp_SetupAutosave.lsp` — autosave i walidacja pol `txt_h`, `z_prec`, stylu, widocznosci i koloru.
+- `gp_SetupPrefix.lsp` — lista i aktywacja prefixow numeracji w `GEO_SETUP`.
+- `gp_SetupGroup.lsp` — ladowanie grupy, tworzenie nowej grupy i dialog nowego prefixu numeracji.
+- `gp_SetupMain.lsp` — glowne okno `GEO_SETUP`, w tym `geocad-setup-show-main-dialog`.
+
+## Zasady
+
+- Kod UI zostaje w `Contents/ui/`.
+- Logika wspolna i operacje na obiektach CAD zostaja w `Contents/core/`.
+- `GEO_SETUP` powinien wywolywac funkcje core, ale nie powinien zawierac niskopoziomowej logiki CAD, jezeli da sie ja wydzielic.
