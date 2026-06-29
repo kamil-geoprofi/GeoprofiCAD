@@ -4,13 +4,14 @@
 ;; GEOPROFICAD - CORE RUNTIME ORCHESTRATOR
 ;; ======================================================
 ;;
-;; Ten plik zostaje jako techniczny punkt przejscia dla
-;; refaktoru core. Docelowo bedzie ladowal male moduly core.
+;; Techniczny punkt przejscia dla refaktoru core.
+;; Kolejnosc ladowania runtime/legacy/modulow jest obecnie jawnie
+;; zapisana w PackageContents.xml, bo AutoCAD bundle pewniej
+;; obsluguje sciezki modulow z manifestu niz findfile/load.
 ;;
-;; Na obecnym etapie pelna, nierozdzielona implementacja
-;; jest zachowana w gp_CoreLegacy.lsp i ladowana bezposrednio
-;; z PackageContents.xml. Dzieki temu nie zmieniamy zachowania
-;; komend podczas czystego podzialu plikow.
+;; Ten plik celowo nie laduje jeszcze podmodulow samodzielnie.
 ;; ======================================================
+
+(setq *geocad-core-split-stage* "shadow-split")
 
 (princ)
