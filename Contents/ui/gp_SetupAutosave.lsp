@@ -123,4 +123,121 @@
   )
 )
 
+(defun geocad-setup-autosave-style
+  (doc group-prefix old-styl kolor txt-h z-prec display / idx new-styl)
+  (setq idx (get_tile "styl_rys"))
+
+  (setq new-styl
+    (if (= idx "1")
+      "Tekst"
+      "Blok"
+    )
+  )
+
+  (if (/= new-styl old-styl)
+    (progn
+      (geocad-setup-save-group-param group-prefix "Styl" new-styl)
+
+      (geocad-setup-apply-current-group-params
+        doc
+        group-prefix
+        kolor
+        txt-h
+        z-prec
+        new-styl
+        display
+      )
+
+      (set_tile
+        "styl_status"
+        (strcat
+          "(Zmieniono "
+          (geocad-setup-style-label old-styl)
+          " -> "
+          (geocad-setup-style-label new-styl)
+          ")"
+        )
+      )
+
+      (set_tile "dirty_status" (strcat "ZAPISANO styl i przekonwertowano grupe " group-prefix "."))
+    )
+  )
+
+  new-styl
+)
+
+(defun geocad-setup-autosave-display
+  (doc group-prefix old-display kolor txt-h z-prec styl / idx new-display)
+  (setq idx (get_tile "display_mode"))
+  (setq new-display (geocad-display-from-popup-index idx))
+
+  (if (/= new-display old-display)
+    (progn
+      (geocad-setup-save-group-param group-prefix "Display" new-display)
+
+      (geocad-setup-apply-current-group-params
+        doc
+        group-prefix
+        kolor
+        txt-h
+        z-prec
+        styl
+        new-display
+      )
+
+      (set_tile
+        "display_status"
+        (strcat
+          "(Zmieniono "
+          (geocad-setup-display-label old-display)
+          " -> "
+          (geocad-setup-display-label new-display)
+          ")"
+        )
+      )
+
+      (set_tile "dirty_status" (strcat "ZAPISANO widocznosc i zaktualizowano grupe " group-prefix "."))
+    )
+  )
+
+  new-display
+)
+
+(defun geocad-setup-autosave-color
+  (doc group-prefix old-color txt-h z-prec styl display / idx new-color)
+  (setq idx (atoi (get_tile "kolor")))
+  (setq new-color (itoa (1+ idx)))
+
+  (if (/= new-color old-color)
+    (progn
+      (geocad-setup-save-group-param group-prefix "Color" new-color)
+
+      (geocad-setup-apply-current-group-params
+        doc
+        group-prefix
+        new-color
+        txt-h
+        z-prec
+        styl
+        display
+      )
+
+      (set_tile
+        "kolor_status"
+        (strcat
+          "(Zmieniono "
+          (geocad-setup-color-label old-color)
+          " -> "
+          (geocad-setup-color-label new-color)
+          ")"
+        )
+      )
+
+      (set_tile "dirty_status" (strcat "ZAPISANO kolor i zaktualizowano grupe " group-prefix "."))
+    )
+  )
+
+  new-color
+)
+
 (princ)
