@@ -17,6 +17,7 @@
         <ComponentEntry AppName="Geoprofi_ProjectMemory" ModuleName="./Contents/core/gp_ProjectMemory.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Numbering" ModuleName="./Contents/core/gp_Numbering.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_CadObjects" ModuleName="./Contents/core/gp_CadObjects.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_Workgroups" ModuleName="./Contents/core/gp_Workgroups.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_PikietaFactory" ModuleName="./Contents/core/gp_PikietaFactory.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_PikietaStyle" ModuleName="./Contents/core/gp_PikietaStyle.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_SetupDialog" ModuleName="./Contents/ui/gp_SetupDialog.lsp" PerDocument="True" />
