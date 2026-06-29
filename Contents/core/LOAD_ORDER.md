@@ -12,12 +12,16 @@
 8. `Contents/core/gp_PikietaFactory.lsp`
 9. `Contents/core/gp_PikietaStyle.lsp`
 10. `Contents/ui/gp_SetupDialog.lsp`
-11. pozostale moduly funkcjonalne: import, export, wstawianie, niwelacje, siatka, usuwanie.
+11. `Contents/ui/gp_SetupAutosave.lsp`
+12. `Contents/ui/gp_SetupPrefix.lsp`
+13. `Contents/ui/gp_SetupGroup.lsp`
+14. `Contents/ui/gp_SetupMain.lsp`
+15. pozostale moduly funkcjonalne: import, export, wstawianie, niwelacje, siatka, usuwanie.
 
 Dlaczego legacy jest przed modulami:
 
 - legacy daje pelna dzialajaca implementacje,
 - nowe moduly moga stopniowo nadpisywac wybrane funkcje tymi samymi definicjami,
-- jezeli modul jest jeszcze pusty/shell, nic nie psuje.
+- jezeli modul jest jeszcze niepelny, legacy nadal zabezpiecza reszte API.
 
 Docelowo, po przeniesieniu definicji i testach, `gp_CoreLegacy.lsp` zostanie odchudzony albo usuniety z manifestu.
