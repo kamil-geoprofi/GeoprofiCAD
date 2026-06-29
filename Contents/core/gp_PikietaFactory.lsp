@@ -9,65 +9,6 @@
 
 (setq *geocad-module-pikietafactory-loaded* T)
 
-(defun geocad-stworz-blok-pikieta ()
-  (if (not (tblsearch "BLOCK" "Pikieta_Geo"))
-    (progn
-      (entmake
-        (list
-          '(0 . "BLOCK")
-          '(2 . "Pikieta_Geo")
-          '(70 . 2)
-          '(10 0.0 0.0 0.0)
-          (cons 8 "0")
-        )
-      )
-
-      (entmake
-        (list
-          '(0 . "POINT")
-          '(10 0.0 0.0 0.0)
-          (cons 8 "0")
-        )
-      )
-
-      (entmake
-        (list
-          '(0 . "ATTDEF")
-          '(10 1.0 0.5 0.0)
-          '(1 . "---")
-          '(2 . "NR")
-          '(3 . "Nr")
-          (cons 40 1.0)
-          '(70 . 0)
-          (cons 8 "0")
-        )
-      )
-
-      (entmake
-        (list
-          '(0 . "ATTDEF")
-          '(10 1.0 -0.5 0.0)
-          '(1 . "0.00")
-          '(2 . "H")
-          '(3 . "H")
-          (cons 40 1.0)
-          '(70 . 0)
-          (cons 8 "0")
-        )
-      )
-
-      (entmake
-        (list
-          '(0 . "ENDBLK")
-          (cons 8 "0")
-        )
-      )
-    )
-  )
-
-  (princ)
-)
-
 (defun geocad-ctx-get (key ctx)
   (cdr (assoc key ctx))
 )
@@ -159,6 +100,7 @@
     (cons 'vis-h vis-h)
     (cons 'dX dX)
     (cons 'dY dY)
+    (cons 'doc doc)
   )
 )
 
@@ -167,13 +109,11 @@
     doc space pt-list nr-str show-z ctx
     /
     txt-h z-prec styl pikt-pref
-    lay-pt lay-nr lay-h
-    vis-nr vis-h dX dY
-    pelny-nr px py pz z-str pt-3d blkRef
+    lay-pt lay-nr lay-h pelny-nr
   )
-
   ;; show-z zostaje w sygnaturze dla kompatybilnosci.
-  ;; Obecna stara funkcja tez realnie opierala widocznosc H na ustawieniu Display.
+  ;; Factory odpowiada za kontekst, prefix i numeracje, a tworzenie
+  ;; encji deleguje do gp_PikietaWriters.lsp.
   (setq txt-h (geocad-ctx-get 'txt-h ctx))
   (setq z-prec (geocad-ctx-get 'z-prec ctx))
   (setq styl (geocad-ctx-get 'styl ctx))
@@ -183,106 +123,34 @@
   (setq lay-nr (geocad-ctx-get 'lay-nr ctx))
   (setq lay-h (geocad-ctx-get 'lay-h ctx))
 
-  (setq vis-nr (geocad-ctx-get 'vis-nr ctx))
-  (setq vis-h (geocad-ctx-get 'vis-h ctx))
-
-  (setq dX (geocad-ctx-get 'dX ctx))
-  (setq dY (geocad-ctx-get 'dY ctx))
-
   (if (not nr-str)
     (setq nr-str "")
   )
 
   (setq nr-str (vl-princ-to-string nr-str))
-  (setq pelny-nr (strcat pikt-pref nr-str))
-
-  (setq px (car pt-list))
-  (setq py (cadr pt-list))
-  (setq pz (caddr pt-list))
-
-  (if (not pz)
-    (setq pz 0.0)
-  )
-
-  (setq pt-list (list px py pz))
-  (setq pt-3d (vlax-3d-point pt-list))
-  (setq z-str (rtos pz 2 z-prec))
+  (setq pelny-nr (geocad-pikieta-empty-nr-if-needed (strcat pikt-pref nr-str)))
 
   (if (= styl "Tekst")
-    (progn
-      (entmakex
-        (list
-          '(0 . "POINT")
-          (cons 10 pt-list)
-          (cons 8 lay-pt)
-        )
-      )
-
-      (if (= vis-nr :vlax-false)
-        (entmakex
-          (list
-            '(0 . "TEXT")
-            (cons 10 (list (+ px dX) (+ py dY) pz))
-            (cons 40 txt-h)
-            (cons 1 pelny-nr)
-            (cons 8 lay-nr)
-          )
-        )
-      )
-
-      (if (= vis-h :vlax-false)
-        (entmakex
-          (list
-            '(0 . "TEXT")
-            (cons 10 (list (+ px dX) (- py dY) pz))
-            (cons 40 txt-h)
-            (cons 1 z-str)
-            (cons 8 lay-h)
-          )
-        )
-      )
+    (geocad-create-text-pikieta
+      pt-list
+      pelny-nr
+      txt-h
+      z-prec
+      (geocad-ctx-get 'display ctx)
+      lay-pt
+      lay-nr
+      lay-h
     )
-
-    (progn
-      (setq blkRef
-        (vla-InsertBlock
-          space
-          pt-3d
-          "Pikieta_Geo"
-          1.0
-          1.0
-          1.0
-          0.0
-        )
-      )
-
-      (vla-put-Layer blkRef lay-pt)
-
-      (foreach att (vlax-invoke blkRef 'GetAttributes)
-        (vla-put-Height att txt-h)
-
-        (cond
-          ((= (vla-get-TagString att) "NR")
-            (vla-put-TextString att pelny-nr)
-            (vla-put-InsertionPoint
-              att
-              (vlax-3d-point (list (+ px dX) (+ py dY) pz))
-            )
-            (vla-put-Invisible att vis-nr)
-            (vla-put-Layer att lay-nr)
-          )
-
-          ((member (vla-get-TagString att) '("H" "Z" "RZEDNA"))
-            (vla-put-TextString att z-str)
-            (vla-put-InsertionPoint
-              att
-              (vlax-3d-point (list (+ px dX) (- py dY) pz))
-            )
-            (vla-put-Invisible att vis-h)
-            (vla-put-Layer att lay-h)
-          )
-        )
-      )
+    (geocad-insert-pikieta-block-from-data
+      (geocad-ctx-get 'doc ctx)
+      pt-list
+      pelny-nr
+      txt-h
+      z-prec
+      (geocad-ctx-get 'display ctx)
+      lay-pt
+      lay-nr
+      lay-h
     )
   )
 
