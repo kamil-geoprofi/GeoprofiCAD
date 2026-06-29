@@ -60,24 +60,27 @@
 (defun geocad-get-cfg (klucz domyslny / val)
   ;; Kolejnosc:
   ;; 1. pamiec konkretnego DWG,
-  ;; 2. rejestr Windows jako fallback globalny,
-  ;; 3. wartosc domyslna.
+  ;; 2. wartosc domyslna.
+  ;;
+  ;; Nie czytamy juz rejestru Windows jako fallbacku,
+  ;; bo nowy rysunek nie powinien dziedziczyc ustawien
+  ;; ze starego projektu.
   (setq val (geocad-setup-ldata-get klucz))
 
   (if val
     val
-    (geocad-get-global-cfg klucz domyslny)
+    domyslny
   )
 )
 
 
 (defun geocad-set-cfg (klucz value)
-  ;; Zapisujemy do DWG oraz do rejestru.
+  ;; Zapisujemy tylko do DWG.
   ;;
   ;; DWG = pamiec projektu.
-  ;; Rejestr = fallback dla nowych rysunkow.
+  ;; Rejestr Windows nie jest juz uzywany jako automatyczny fallback,
+  ;; zeby nowe rysunki startowaly czysto od wartosci domyslnych.
   (geocad-setup-ldata-put klucz value)
-  (vl-registry-write *geocad-registry-path* klucz value)
   value
 )
 
