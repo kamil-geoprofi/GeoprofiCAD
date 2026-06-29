@@ -28,6 +28,7 @@
         <ComponentEntry AppName="Geoprofi_SetupMain" ModuleName="./Contents/ui/gp_SetupMain.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Import" ModuleName="./Contents/gp_Import.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Export" ModuleName="./Contents/gp_Export.lsp" PerDocument="True" /> 
+        <ComponentEntry AppName="Geoprofi_ExportRadarCompat" ModuleName="./Contents/core/gp_ExportRadarCompat.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Wstaw" ModuleName="./Contents/gp_WstawPikiete.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Spadki" ModuleName="./Contents/gp_Spadki.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Niw_Os" ModuleName="./Contents/gp_NiwelacjaOsi.lsp" PerDocument="True" /> 
