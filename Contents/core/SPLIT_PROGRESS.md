@@ -17,8 +17,12 @@ Refaktor przeszedl z trybu `shadow split` do pracy bez ladowania legacy:
 - `Contents/core/gp_Numbering.lsp` — prefixy numeracji, liczniki, `GP:PobierzNastepnyNumer`.
 - `Contents/core/gp_CadObjects.lsp` — helpery AutoCAD/VLAX, punkty, teksty, nearest text.
 - `Contents/core/gp_Workgroups.lsp` — pamiec grup roboczych, skaner warstw, inicjalizacja ustawien DWG.
-- `Contents/core/gp_PikietaFactory.lsp` — tworzenie bloku, kontekst, batch insert pikiet.
-- `Contents/core/gp_PikietaStyle.lsp` — konwersje Blok/Tekst i update istniejacych pikiet.
+- `Contents/core/gp_PikietaSchema.lsp` — centralny schemat bloku pikiety i tagow atrybutow.
+- `Contents/core/gp_TextRadar.lsp` — szybkie parowanie tekstow z punktami, wspolne dla eksportu i konwersji.
+- `Contents/core/gp_PikietaWriters.lsp` — jedyne miejsce tworzenia pikiety tekstowej/blokowej.
+- `Contents/core/gp_PikietaData.lsp` — model posredni i odczyt DWG do `PikietaData[]`.
+- `Contents/core/gp_PikietaFactory.lsp` — kontekst importu/wstawiania, numeracja, batch insert pikiet.
+- `Contents/core/gp_PikietaConversion.lsp` — konwersje Blok/Tekst i update istniejacych pikiet.
 
 ## Realnie wydzielone moduly UI
 
@@ -31,8 +35,7 @@ Refaktor przeszedl z trybu `shadow split` do pracy bez ladowania legacy:
 ## Celowo jeszcze nie robione
 
 - Fizyczne skasowanie albo odchudzenie `gp_CoreLegacy.lsp` — narzedzie zablokowalo masowa podmiane pliku; legacy zostaje jako nieaktywny backup w repo.
-- Optymalizacja konwersji Blok/Tekst — jeszcze nie robiona.
-- Radar tekstow z eksportu — jeszcze nie przeniesiony.
+- Stare moduly `gp_PikietaStyle.lsp` i `gp_PikietaStyleOptimized.lsp` zostaly usuniete z aktywnego kodu i zastapione modulami odpowiedzialnosciowymi.
 
 ## Zasada dalszych zmian
 
