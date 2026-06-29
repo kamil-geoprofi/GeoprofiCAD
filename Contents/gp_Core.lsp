@@ -1148,6 +1148,15 @@
 
 (defun geocad-save-group-settings
   (prefix kolor pikt_pref styl display txt-h z-prec z_tags / pref)
+  ;; Zapisuje parametry aktywnej grupy roboczej.
+  ;;
+  ;; UWAGA:
+  ;; z_tags zostaje w sygnaturze tylko dla kompatybilnosci
+  ;; ze starszymi wywolaniami funkcji.
+  ;; Tagi rzednych NIE sa juz parametrem grupy roboczej.
+  ;; Sa ustawieniem DWG/projektu uzywanym przy rozpoznawaniu Z
+  ;; z obcych blokow/obiektow.
+
   (setq pref (geocad-normalize-layer-prefix prefix))
 
   (if (/= pref "")
@@ -1160,7 +1169,6 @@
       (geocad-group-cfg-write pref "Display" display)
       (geocad-group-cfg-write pref "TxtH" txt-h)
       (geocad-group-cfg-write pref "Prec" z-prec)
-      (geocad-group-cfg-write pref "ZTags" z_tags)
 
       ;; Prefix numeracji tez zapisujemy w pamieci tej grupy.
       ;; Dzieki temu pojawi sie w GEO_SETUP nawet przed utworzeniem pikiety.
@@ -1994,9 +2002,357 @@
 )
 
 
+(defun geocad-setup-param-prefix-label
+  (pikt-pref / pref)
+  (setq pref (geocad-normalize-pikt-prefix pikt-pref))
+
+  (if (= pref "")
+    *geocad-no-pikt-prefix-label*
+    pref
+  )
+)
+
+
+(defun geocad-setup-update-param-context
+  (group-prefix pikt-pref / group pref)
+  (setq group (geocad-normalize-layer-prefix group-prefix))
+  (setq pref (geocad-setup-param-prefix-label pikt-pref))
+
+  (if (= group "")
+    (setq group "POMIAR")
+  )
+
+  (set_tile "param_context_group" (strcat "Grupa: " group))
+  (set_tile "param_context_prefix" (strcat "Prefix numeracji: " pref))
+
+  group
+)
+
+
+(defun geocad-setup-clear-param-statuses ()
+  (set_tile "styl_status" " ")
+  (set_tile "display_status" " ")
+  (set_tile "txt_h_status" " ")
+  (set_tile "z_prec_status" " ")
+  (set_tile "kolor_status" " ")
+)
+
+
+(defun geocad-setup-color-label
+  (color-str / n)
+  (setq n (atoi color-str))
+
+  (cond
+    ((= n 1) "1 - Czerwony")
+    ((= n 2) "2 - Zolty")
+    ((= n 3) "3 - Zielony")
+    ((= n 4) "4 - Cyjan")
+    ((= n 5) "5 - Niebieski")
+    ((= n 6) "6 - Magenta")
+    ((= n 7) "7 - Czarny/Bialy")
+    (T color-str)
+  )
+)
+
+
+(defun geocad-setup-style-label
+  (styl)
+  (if (= styl "Tekst")
+    "Zwykly Punkt + Tekst"
+    "Inteligentny Blok"
+  )
+)
+
+
+(defun geocad-setup-display-label
+  (display)
+  (cond
+    ((= display "Oba") "Oba (Nr + H)")
+    ((= display "Numer") "Tylko Numer")
+    ((= display "Rzedna") "Tylko Rzedna (H)")
+    ((= display "Brak") "Nic (Sam symbol)")
+    (T display)
+  )
+)
+
+
+(defun geocad-setup-normalize-real-text
+  (txt)
+  (geocad-trim-string
+    (vl-string-translate "," "." txt)
+  )
+)
+
+
+(defun geocad-setup-positive-real-from-text
+  (txt / s val)
+  (setq s (geocad-setup-normalize-real-text txt))
+  (setq val (distof s 2))
+
+  (if
+    (and
+      val
+      (> val 0.0)
+    )
+    val
+    nil
+  )
+)
+
+
+(defun geocad-setup-digits-only-p
+  (txt / s i ok code)
+  (setq s (geocad-trim-string txt))
+  (setq ok (/= s ""))
+  (setq i 1)
+
+  (while
+    (and
+      ok
+      (<= i (strlen s))
+    )
+    (setq code (ascii (substr s i 1)))
+
+    (if
+      (not
+        (and
+          (>= code 48)
+          (<= code 57)
+        )
+      )
+      (setq ok nil)
+    )
+
+    (setq i (1+ i))
+  )
+
+  ok
+)
+
+
+(defun geocad-setup-save-group-param
+  (group-prefix key value / group)
+  ;; Zapis pojedynczego parametru grupy.
+  ;; Uzywane przez auto-zapis w GEO_SETUP.
+
+  (setq group (geocad-normalize-layer-prefix group-prefix))
+
+  (if (= group "")
+    (setq group "POMIAR")
+  )
+
+  ;; Aktywny kontekst DWG.
+  (geocad-set-cfg key value)
+
+  ;; Pamiec konkretnej grupy.
+  (geocad-save-known-prefix group)
+  (geocad-group-cfg-write group key value)
+
+  value
+)
+
+
+(defun geocad-setup-try-save-txt-h
+  (group-prefix old-txt-h / raw norm val)
+  (if
+    (or
+      (not old-txt-h)
+      (= old-txt-h "")
+    )
+    (setq old-txt-h "1.0")
+  )
+
+  (setq raw (get_tile "txt_h"))
+  (setq norm (geocad-setup-normalize-real-text raw))
+  (setq val (geocad-setup-positive-real-from-text raw))
+
+  (if
+    (not val)
+    (progn
+      (set_tile "txt_h" old-txt-h)
+      (set_tile "txt_h_status" "BLAD - wysokosc tekstu musi byc liczba > 0. Przywrocono poprzednia wartosc.")
+      (set_tile "dirty_status" "BLAD - nie zapisano wysokosci tekstu.")
+      (list nil old-txt-h)
+    )
+    (progn
+      (set_tile "txt_h" norm)
+
+      (if (/= norm old-txt-h)
+        (progn
+          (geocad-setup-save-group-param group-prefix "TxtH" norm)
+          (set_tile "txt_h_status" (strcat "(Zmieniono " old-txt-h " -> " norm ")"))
+          (set_tile "dirty_status" (strcat "ZAPISANO wysokosc tekstu dla grupy " group-prefix "."))
+        )
+        (progn
+          (set_tile "txt_h_status" "(Bez zmian)")
+          (set_tile "dirty_status" "Bez zmian.")
+        )
+      )
+
+      (list T norm)
+    )
+  )
+)
+
+
+(defun geocad-setup-try-save-z-prec
+  (group-prefix old-z-prec / raw norm val)
+  (if
+    (or
+      (not old-z-prec)
+      (= old-z-prec "")
+    )
+    (setq old-z-prec "2")
+  )
+
+  (setq raw (get_tile "z_prec"))
+  (setq norm (geocad-trim-string raw))
+
+  (if
+    (not (geocad-setup-digits-only-p norm))
+    (progn
+      (set_tile "z_prec" old-z-prec)
+      (set_tile "z_prec_status" "BLAD - precyzja Z musi byc liczba calkowita 0-8. Przywrocono poprzednia wartosc.")
+      (set_tile "dirty_status" "BLAD - nie zapisano precyzji Z.")
+      (list nil old-z-prec)
+    )
+    (progn
+      (setq val (atoi norm))
+
+      (if
+        (or
+          (< val 0)
+          (> val 8)
+        )
+        (progn
+          (set_tile "z_prec" old-z-prec)
+          (set_tile "z_prec_status" "BLAD - precyzja Z musi byc w zakresie 0-8. Przywrocono poprzednia wartosc.")
+          (set_tile "dirty_status" "BLAD - nie zapisano precyzji Z.")
+          (list nil old-z-prec)
+        )
+        (progn
+          (setq norm (itoa val))
+          (set_tile "z_prec" norm)
+
+          (if (/= norm old-z-prec)
+            (progn
+              (geocad-setup-save-group-param group-prefix "Prec" norm)
+              (set_tile "z_prec_status" (strcat "(Zmieniono " old-z-prec " -> " norm ")"))
+              (set_tile "dirty_status" (strcat "ZAPISANO precyzje Z dla grupy " group-prefix "."))
+            )
+            (progn
+              (set_tile "z_prec_status" "(Bez zmian)")
+              (set_tile "dirty_status" "Bez zmian.")
+            )
+          )
+
+          (list T norm)
+        )
+      )
+    )
+  )
+)
+
+
+(defun geocad-setup-autosave-style
+  (group-prefix old-styl / idx new-styl)
+  (setq idx (get_tile "styl_rys"))
+
+  (setq new-styl
+    (if (= idx "1")
+      "Tekst"
+      "Blok"
+    )
+  )
+
+  (if (/= new-styl old-styl)
+    (progn
+      (geocad-setup-save-group-param group-prefix "Styl" new-styl)
+      (set_tile
+        "styl_status"
+        (strcat
+          "(Zmieniono "
+          (geocad-setup-style-label old-styl)
+          " -> "
+          (geocad-setup-style-label new-styl)
+          ")"
+        )
+      )
+      (set_tile "dirty_status" (strcat "ZAPISANO styl dla grupy " group-prefix "."))
+    )
+    (progn
+      (set_tile "styl_status" "(Bez zmian)")
+      (set_tile "dirty_status" "Bez zmian.")
+    )
+  )
+
+  new-styl
+)
+
+
+(defun geocad-setup-autosave-display
+  (group-prefix old-display / idx new-display)
+  (setq idx (get_tile "display_mode"))
+  (setq new-display (geocad-display-from-popup-index idx))
+
+  (if (/= new-display old-display)
+    (progn
+      (geocad-setup-save-group-param group-prefix "Display" new-display)
+      (set_tile
+        "display_status"
+        (strcat
+          "(Zmieniono "
+          (geocad-setup-display-label old-display)
+          " -> "
+          (geocad-setup-display-label new-display)
+          ")"
+        )
+      )
+      (set_tile "dirty_status" (strcat "ZAPISANO widocznosc dla grupy " group-prefix "."))
+    )
+    (progn
+      (set_tile "display_status" "(Bez zmian)")
+      (set_tile "dirty_status" "Bez zmian.")
+    )
+  )
+
+  new-display
+)
+
+
+(defun geocad-setup-autosave-color
+  (group-prefix old-color / idx new-color)
+  (setq idx (atoi (get_tile "kolor")))
+  (setq new-color (itoa (1+ idx)))
+
+  (if (/= new-color old-color)
+    (progn
+      (geocad-setup-save-group-param group-prefix "Color" new-color)
+      (set_tile
+        "kolor_status"
+        (strcat
+          "(Zmieniono "
+          (geocad-setup-color-label old-color)
+          " -> "
+          (geocad-setup-color-label new-color)
+          ")"
+        )
+      )
+      (set_tile "dirty_status" (strcat "ZAPISANO kolor dla grupy " group-prefix "."))
+    )
+    (progn
+      (set_tile "kolor_status" "(Bez zmian)")
+      (set_tile "dirty_status" "Bez zmian.")
+    )
+  )
+
+  new-color
+)
+
+
 (defun geocad-setup-refresh-pikt-prefix-popup
   (group-prefix current-pikt-pref / group pref prefixes select-prefixes display idx)
-  ;; Popup prefixow numeracji ma teraz 3 logiczne czesci:
+  ;; Popup prefixow numeracji ma 3 logiczne czesci:
   ;; 1. (bez prefixu),
   ;; 2. istniejace prefixy,
   ;; 3. --- DODAJ NOWY PREFIX ---.
@@ -2018,8 +2374,6 @@
     )
   )
 
-  ;; Dla pustego prefixu nie uzywamy listy zapisanych prefixow.
-  ;; Jest zawsze pierwsza, jawna opcja.
   (setq select-prefixes
     (append
       (list "")
@@ -2089,7 +2443,7 @@
   (group-prefix pikt-pref / group pref)
   ;; Aktywuje prefix numeracji od razu.
   ;; To nie jest zmiana parametrow wizualnych grupy,
-  ;; wiec nie wymaga przycisku Zapisz parametry.
+  ;; wiec nie wymaga zadnego przycisku zapisu.
 
   (setq group (geocad-normalize-layer-prefix group-prefix))
   (setq pref (geocad-normalize-pikt-prefix pikt-pref))
@@ -2115,54 +2469,10 @@
 )
 
 
-(defun geocad-setup-read-main-dialog-values
-  (active-prefix active-pikt-pref / txt-h z-prec prefix pikt-pref z-tags kolor styl-idx disp-idx styl display)
-  ;; Czyta i normalizuje aktualne wartosci z glownego okna GEO_SETUP.
-  ;;
-  ;; Prefix grupy i prefix numeracji NIE sa juz edit_boxami.
-  ;; Przychodza jako aktywny kontekst:
-  ;; - active-prefix,
-  ;; - active-pikt-pref.
-  ;;
-  ;; Zwraca liste:
-  ;; (prefix pikt-pref kolor txt-h z-prec styl display z-tags)
-
-  (setq txt-h (get_tile "txt_h"))
-  (setq z-prec (get_tile "z_prec"))
-  (setq z-tags (get_tile "z_tags"))
-  (setq kolor (itoa (1+ (atoi (get_tile "kolor")))))
-  (setq styl-idx (get_tile "styl_rys"))
-  (setq disp-idx (get_tile "display_mode"))
-
-  (setq prefix (geocad-normalize-layer-prefix active-prefix))
-  (setq pikt-pref (geocad-normalize-pikt-prefix active-pikt-pref))
-  (setq z-tags (geocad-trim-string z-tags))
-
-  (if (= prefix "")
-    (setq prefix "POMIAR")
-  )
-
-  (setq styl
-    (if (= styl-idx "1")
-      "Tekst"
-      "Blok"
-    )
-  )
-
-  (setq display
-    (geocad-display-from-popup-index disp-idx)
-  )
-
-  (set_tile "z_tags" z-tags)
-
-  (list prefix pikt-pref kolor txt-h z-prec styl display z-tags)
-)
-
-
 (defun geocad-setup-save-active-values
-  (values / prefix pikt-pref kolor txt-h z-prec styl display z-tags)
-  ;; Zapisuje aktywny kontekst DWG,
-  ;; ale NIE zapisuje pamieci parametrow grupy jako edytowanych.
+  (values / prefix pikt-pref kolor txt-h z-prec styl display)
+  ;; Zapisuje aktywny kontekst DWG.
+  ;; Nie dotyka ZTags, bo Tagi rzednych nie sa parametrem grupy.
 
   (setq prefix (nth 0 values))
   (setq pikt-pref (nth 1 values))
@@ -2171,7 +2481,6 @@
   (setq z-prec (nth 4 values))
   (setq styl (nth 5 values))
   (setq display (nth 6 values))
-  (setq z-tags (nth 7 values))
 
   (geocad-set-cfg "Styl" styl)
   (geocad-set-cfg "Display" display)
@@ -2179,60 +2488,16 @@
   (geocad-set-cfg "Prec" z-prec)
   (geocad-set-cfg "Prefix" prefix)
   (geocad-set-cfg "PiktPrefix" pikt-pref)
-  (geocad-set-cfg "ZTags" z-tags)
   (geocad-set-cfg "Color" kolor)
 
   values
 )
 
 
-(defun geocad-setup-save-dialog-values
-  (active-prefix active-pikt-pref / values prefix pikt-pref kolor txt-h z-prec styl display z-tags)
-  ;; Zapisuje parametry aktywnej grupy z glownego okna GEO_SETUP,
-  ;; ale NIE zamyka dialogu.
-  ;;
-  ;; Zwraca liste:
-  ;; (prefix pikt-pref kolor txt-h z-prec styl display z-tags)
-
-  (setq values
-    (geocad-setup-read-main-dialog-values
-      active-prefix
-      active-pikt-pref
-    )
-  )
-
-  (setq values (geocad-setup-save-active-values values))
-
-  (setq prefix (nth 0 values))
-  (setq pikt-pref (nth 1 values))
-  (setq kolor (nth 2 values))
-  (setq txt-h (nth 3 values))
-  (setq z-prec (nth 4 values))
-  (setq styl (nth 5 values))
-  (setq display (nth 6 values))
-  (setq z-tags (nth 7 values))
-
-  ;; Zapis pamieci grupy.
-  ;; Tu zapisuje sie tez ostatni prefix numeracji tej grupy.
-  (geocad-save-group-settings
-    prefix
-    kolor
-    pikt-pref
-    styl
-    display
-    txt-h
-    z-prec
-    z-tags
-  )
-
-  values
-)
-
-
 (defun geocad-setup-load-group-to-main-dialog
-  (prefix / doc pref fallback-color kolor pikt-pref styl display txt-h z-prec z-tags values)
+  (prefix / doc pref fallback-color kolor pikt-pref styl display txt-h z-prec values)
   ;; Laduje parametry grupy do glownego dialogu.
-  ;; Nie uzywa juz kafelka "prefix", bo aktywna grupa jest popupem.
+  ;; Nie laduje ZTags, bo Tagi rzednych nie sa parametrem grupy.
 
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
   (geocad-ensure-dwg-setup-initialized doc)
@@ -2303,17 +2568,8 @@
     )
   )
 
-  (setq z-tags
-    (geocad-group-cfg-read
-      pref
-      "ZTags"
-      (get_tile "z_tags")
-    )
-  )
-
   (set_tile "txt_h" txt-h)
   (set_tile "z_prec" z-prec)
-  (set_tile "z_tags" z-tags)
   (set_tile "kolor" (geocad-popup-color-index kolor))
   (set_tile "styl_rys" (geocad-popup-styl-index styl))
   (set_tile "display_mode" (geocad-popup-display-index display))
@@ -2327,7 +2583,6 @@
       z-prec
       styl
       display
-      z-tags
     )
   )
 
@@ -2336,12 +2591,16 @@
 
 
 (defun geocad-setup-create-new-group
-  (prefix pikt-pref / pref pikt txt-h z-prec z-tags kolor styl display)
+  (prefix pikt-pref / pref pikt txt-h z-prec kolor styl display z-tags)
   ;; Tworzy nowa grupe robocza i od razu ustawia ja jako aktywna.
   ;;
   ;; Parametry wizualne nowej grupy startuja z aktualnych ustawien DWG.
   ;; Prefix numeracji trafia tu tylko wtedy, jezeli uzytkownik wpisal go
   ;; w dialogu tworzenia nowej grupy.
+  ;;
+  ;; z-tags pobieramy tylko jako argument kompatybilnosci dla
+  ;; geocad-save-group-settings, ale funkcja juz nie zapisuje ZTags
+  ;; jako parametru grupy.
 
   (setq pref (geocad-normalize-layer-prefix prefix))
   (setq pikt (geocad-normalize-pikt-prefix pikt-pref))
@@ -2350,10 +2609,10 @@
     (progn
       (setq txt-h (geocad-get-cfg "TxtH" "1.0"))
       (setq z-prec (geocad-get-cfg "Prec" "2"))
-      (setq z-tags (geocad-get-cfg "ZTags" "H, Z, RZEDNA"))
       (setq kolor (geocad-get-cfg "Color" "3"))
       (setq styl (geocad-get-cfg "Styl" "Blok"))
       (setq display (geocad-get-cfg "Display" "Oba"))
+      (setq z-tags (geocad-get-cfg "ZTags" "H,Z,RZEDNA"))
 
       ;; Aktywny kontekst DWG.
       (geocad-set-cfg "Prefix" pref)
@@ -2362,7 +2621,6 @@
       (geocad-set-cfg "Display" display)
       (geocad-set-cfg "TxtH" txt-h)
       (geocad-set-cfg "Prec" z-prec)
-      (geocad-set-cfg "ZTags" z-tags)
       (geocad-set-cfg "Color" kolor)
 
       ;; Pamiec nowej grupy.
@@ -2628,7 +2886,7 @@
   (
     doc
     /
-    txt-h z-prec prefix pikt_pref z_tags kolor styl display
+    txt-h z-prec prefix pikt_pref kolor styl display z-tags
     dcl-file dcl-fn dcl-id status
     col-idx styl-idx disp-idx
     prefix_groups
@@ -2637,9 +2895,8 @@
     pikt_prefix_select_prefixes pikt_prefix_select_display pikt_prefix_select_idx
     selected_pikt_prefix
     group_popup_bundle
-    save_result active_result
+    save_result validate_result active_result
     target_prefix
-    dirty
     saved_in_dialog
   )
 
@@ -2652,10 +2909,10 @@
         z-prec (geocad-get-cfg "Prec" "2")
         prefix (geocad-get-cfg "Prefix" "POMIAR")
         pikt_pref (geocad-get-cfg "PiktPrefix" "")
-        z_tags (geocad-get-cfg "ZTags" "H, Z, RZEDNA")
         kolor (geocad-get-cfg "Color" "3")
         styl (geocad-get-cfg "Styl" "Blok")
         display (geocad-get-cfg "Display" "Oba")
+        z-tags (geocad-get-cfg "ZTags" "H,Z,RZEDNA")
   )
 
   (setq prefix (geocad-normalize-layer-prefix prefix))
@@ -2704,12 +2961,23 @@
   (write-line "  }" dcl-fn)
 
   (write-line "  : boxed_column { label = \"Parametry aktywnej grupy\";" dcl-fn)
+  (write-line "    : text { key = \"param_context_group\"; label = \"Grupa: -\"; }" dcl-fn)
+  (write-line "    : text { key = \"param_context_prefix\"; label = \"Prefix numeracji: -\"; }" dcl-fn)
+
   (write-line "    : popup_list { key = \"styl_rys\"; label = \"Styl na mapie:\"; list = \"Inteligentny Blok\\nZwykly Punkt + Tekst\"; }" dcl-fn)
+  (write-line "    : text { key = \"styl_status\"; label = \" \"; }" dcl-fn)
+
   (write-line "    : popup_list { key = \"display_mode\"; label = \"Widocznosc:\"; list = \"Oba (Nr + H)\\nTylko Numer\\nTylko Rzedna (H)\\nNic (Sam symbol)\"; }" dcl-fn)
+  (write-line "    : text { key = \"display_status\"; label = \" \"; }" dcl-fn)
+
   (write-line "    : edit_box { key = \"txt_h\"; label = \"Wysokosc tekstu:\"; edit_width = 8; }" dcl-fn)
+  (write-line "    : text { key = \"txt_h_status\"; label = \" \"; }" dcl-fn)
+
   (write-line "    : edit_box { key = \"z_prec\"; label = \"Miejsca po przecinku (Z):\"; edit_width = 8; }" dcl-fn)
-  (write-line "    : edit_box { key = \"z_tags\"; label = \"Tagi rzednych (np. H, Z, WYS):\"; edit_width = 20; }" dcl-fn)
+  (write-line "    : text { key = \"z_prec_status\"; label = \" \"; }" dcl-fn)
+
   (write-line "    : popup_list { key = \"kolor\"; label = \"Kolor podstawowy:\"; list = \"1 - Czerwony\\n2 - Zolty\\n3 - Zielony\\n4 - Cyjan\\n5 - Niebieski\\n6 - Magenta\\n7 - Czarny/Bialy\"; }" dcl-fn)
+  (write-line "    : text { key = \"kolor_status\"; label = \" \"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
   (write-line "  : boxed_column { label = \"Status\";" dcl-fn)
@@ -2717,17 +2985,16 @@
   (write-line "  }" dcl-fn)
 
   (write-line "  : boxed_column { label = \"Akcje\";" dcl-fn)
-  (write-line "    : text { label = \"Aktywna grupa i aktywny prefix dzialaja od razu.\"; }" dcl-fn)
-  (write-line "    : text { label = \"Zapisz parametry zapisuje tylko parametry aktywnej grupy.\"; }" dcl-fn)
+  (write-line "    : text { label = \"Aktywna grupa, aktywny prefix i parametry zapisuja sie od razu.\"; }" dcl-fn)
+  (write-line "    : text { label = \"Przyciski ponizej aktualizuja istniejace obiekty w rysunku.\"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
   (write-line "  : row { alignment = centered;" dcl-fn)
-  (write-line "    : button { key = \"save_only\"; label = \"Zapisz parametry\"; is_default = true; }" dcl-fn)
-  (write-line "    : button { key = \"save_update\"; label = \"Zapisz i aktualizuj te grupe\"; }" dcl-fn)
+  (write-line "    : button { key = \"save_update\"; label = \"Aktualizuj te grupe\"; is_default = true; }" dcl-fn)
+  (write-line "    : button { key = \"save_update_all\"; label = \"Aktualizuj wszystkie grupy\"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
   (write-line "  : row { alignment = centered;" dcl-fn)
-  (write-line "    : button { key = \"save_update_all\"; label = \"Zapisz i aktualizuj wszystkie grupy\"; }" dcl-fn)
   (write-line "    : button { key = \"cancel\"; label = \"Zamknij\"; is_cancel = true; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
@@ -2766,7 +3033,6 @@
   ;; ------------------------------------------------------
   (set_tile "txt_h" txt-h)
   (set_tile "z_prec" z-prec)
-  (set_tile "z_tags" z_tags)
 
   (setq col-idx (atoi kolor))
 
@@ -2782,6 +3048,10 @@
   (set_tile "styl_rys" (geocad-popup-styl-index styl))
   (set_tile "display_mode" (geocad-popup-display-index display))
 
+  ;; Kontekst parametrow.
+  (geocad-setup-update-param-context prefix pikt_pref)
+  (geocad-setup-clear-param-statuses)
+
   ;; ------------------------------------------------------
   ;; Wypelnienie listy prefixow numeracji dla aktualnej grupy.
   ;; ------------------------------------------------------
@@ -2793,11 +3063,16 @@
   (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))
 
   ;; Status poczatkowy.
-  (setq dirty nil)
   (setq saved_in_dialog nil)
   (set_tile
     "dirty_status"
-    (strcat "AKTYWNA GRUPA: " prefix ". Aktywny prefix: " (if (= pikt_pref "") *geocad-no-pikt-prefix-label* pikt_pref) ".")
+    (strcat
+      "AKTYWNA GRUPA: "
+      prefix
+      ". Aktywny prefix: "
+      (geocad-setup-param-prefix-label pikt_pref)
+      "."
+    )
   )
 
   ;; ------------------------------------------------------
@@ -2806,10 +3081,10 @@
 
   ;; Wybor grupy:
   ;; - indeks 0 otwiera osobny dialog tworzenia nowej grupy,
-  ;; - istniejaca grupa aktywuje sie natychmiast, bez klikania Zapisz.
+  ;; - istniejaca grupa aktywuje sie natychmiast.
   (action_tile
     "prefix_select"
-    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (= prefix_select_idx 0) (done_dialog 10) (progn (setq prefix (nth prefix_select_idx prefix_select_prefixes)) (setq active_result (geocad-setup-load-group-to-main-dialog prefix)) (setq prefix (nth 0 active_result)) (setq pikt_pref (nth 1 active_result)) (setq kolor (nth 2 active_result)) (setq txt-h (nth 3 active_result)) (setq z-prec (nth 4 active_result)) (setq styl (nth 5 active_result)) (setq display (nth 6 active_result)) (setq z_tags (nth 7 active_result)) (setq active_result (geocad-setup-save-active-values active_result)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq dirty nil) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNA GRUPA: \" prefix \". Aktywny prefix: \" (if (= pikt_pref \"\") *geocad-no-pikt-prefix-label* pikt_pref) \".\"))))"
+    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (= prefix_select_idx 0) (done_dialog 10) (progn (setq prefix (nth prefix_select_idx prefix_select_prefixes)) (setq active_result (geocad-setup-load-group-to-main-dialog prefix)) (setq prefix (nth 0 active_result)) (setq pikt_pref (nth 1 active_result)) (setq kolor (nth 2 active_result)) (setq txt-h (nth 3 active_result)) (setq z-prec (nth 4 active_result)) (setq styl (nth 5 active_result)) (setq display (nth 6 active_result)) (setq active_result (geocad-setup-save-active-values active_result)) (geocad-setup-update-param-context prefix pikt_pref) (geocad-setup-clear-param-statuses) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNA GRUPA: \" prefix \". Aktywny prefix: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
   )
 
   ;; Wybor prefixu numeracji:
@@ -2818,59 +3093,48 @@
   ;; - --- DODAJ NOWY PREFIX --- otwiera osobny dialog.
   (action_tile
     "pikt_pref_select"
-    "(setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (setq selected_pikt_prefix (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)) (if (= selected_pikt_prefix *geocad-add-pikt-prefix-marker*) (done_dialog 11) (progn (setq pikt_pref (geocad-setup-activate-pikt-prefix prefix selected_pikt_prefix)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNY PREFIX NUMERACJI: \" (if (= pikt_pref \"\") *geocad-no-pikt-prefix-label* pikt_pref) \".\" (if dirty \" Parametry grupy nadal maja niezapisane zmiany.\" \"\"))))))"
+    "(setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (setq selected_pikt_prefix (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)) (if (= selected_pikt_prefix *geocad-add-pikt-prefix-marker*) (done_dialog 11) (progn (setq pikt_pref (geocad-setup-activate-pikt-prefix prefix selected_pikt_prefix)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (geocad-setup-update-param-context prefix pikt_pref) (geocad-setup-clear-param-statuses) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNY PREFIX NUMERACJI: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
   )
 
-  ;; Pozostale parametry grupy.
+  ;; Auto-zapis parametrow grupy.
   (action_tile
     "txt_h"
-    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO wysokosc tekstu - kliknij Zapisz parametry.\")"
+    "(setq save_result (geocad-setup-try-save-txt-h prefix txt-h)) (setq txt-h (cadr save_result))"
   )
 
   (action_tile
     "z_prec"
-    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO precyzje rzednej - kliknij Zapisz parametry.\")"
-  )
-
-  (action_tile
-    "z_tags"
-    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO tagi rzednych - kliknij Zapisz parametry.\")"
-  )
-
-  (action_tile
-    "kolor"
-    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO kolor - kliknij Zapisz parametry.\")"
+    "(setq save_result (geocad-setup-try-save-z-prec prefix z-prec)) (setq z-prec (cadr save_result))"
   )
 
   (action_tile
     "styl_rys"
-    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO styl - kliknij Zapisz parametry.\")"
+    "(setq styl (geocad-setup-autosave-style prefix styl))"
   )
 
   (action_tile
     "display_mode"
-    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO widocznosc - kliknij Zapisz parametry.\")"
+    "(setq display (geocad-setup-autosave-display prefix display))"
   )
 
-  ;; Zapis parametrow aktywnej grupy.
-  ;; Nie zamyka okna.
   (action_tile
-    "save_only"
-    "(setq save_result (geocad-setup-save-dialog-values prefix pikt_pref)) (setq prefix (nth 0 save_result)) (setq pikt_pref (nth 1 save_result)) (setq kolor (nth 2 save_result)) (setq txt-h (nth 3 save_result)) (setq z-prec (nth 4 save_result)) (setq styl (nth 5 save_result)) (setq display (nth 6 save_result)) (setq z_tags (nth 7 save_result)) (setq group_popup_bundle (geocad-setup-refresh-group-popup prefix)) (setq prefix_groups (nth 0 group_popup_bundle)) (setq prefix_select_prefixes (nth 1 group_popup_bundle)) (setq prefix_select_display (nth 2 group_popup_bundle)) (setq prefix_select_idx (nth 3 group_popup_bundle)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq saved_in_dialog T) (setq dirty nil) (set_tile \"dirty_status\" (strcat \"ZAPISANO PARAMETRY - grupa: \" prefix \", prefix: \" (if (= pikt_pref \"\") *geocad-no-pikt-prefix-label* pikt_pref) \".\"))"
+    "kolor"
+    "(setq kolor (geocad-setup-autosave-color prefix kolor))"
   )
 
-  ;; Status 2:
-  ;; zapis ustawien + aktualizacja obiektow tej samej grupy.
+  ;; Aktualizacja obiektow tej samej grupy.
+  ;; Przed zamknieciem dialogu wymuszamy walidacje pol tekstowych,
+  ;; bo uzytkownik mogl wpisac wartosc i od razu kliknac przycisk.
   (action_tile
     "save_update"
-    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 2)"
+    "(setq save_result (geocad-setup-try-save-txt-h prefix txt-h)) (setq txt-h (cadr save_result)) (if (car save_result) (progn (setq validate_result (geocad-setup-try-save-z-prec prefix z-prec)) (setq z-prec (cadr validate_result)) (if (car validate_result) (progn (setq kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 2)))))"
   )
 
-  ;; Status 3:
-  ;; zapis ustawien aktywnej grupy + hurtowa aktualizacja wszystkich grup.
+  ;; Aktualizacja wszystkich grup.
+  ;; Rowniez walidujemy pola tekstowe przed zamknieciem dialogu.
   (action_tile
     "save_update_all"
-    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 3)"
+    "(setq save_result (geocad-setup-try-save-txt-h prefix txt-h)) (setq txt-h (cadr save_result)) (if (car save_result) (progn (setq validate_result (geocad-setup-try-save-z-prec prefix z-prec)) (setq z-prec (cadr validate_result)) (if (car validate_result) (progn (setq kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 3)))))"
   )
 
   (action_tile "cancel" "(done_dialog 0)")
@@ -2891,8 +3155,8 @@
       ;; Zapis po akcji.
       ;;
       ;; status 0 = Zamknij
-      ;; status 2 = Zapisz i aktualizuj te grupe
-      ;; status 3 = Zapisz i aktualizuj wszystkie grupy
+      ;; status 2 = Aktualizuj te grupe
+      ;; status 3 = Aktualizuj wszystkie grupy
       ;; ------------------------------------------------------
       (if
         (member status '(2 3))
@@ -2908,33 +3172,24 @@
             (geocad-display-from-popup-index disp-idx)
           )
 
-          ;; Prefix grupy i prefix numeracji sa aktywnym kontekstem.
           (setq prefix (geocad-normalize-layer-prefix prefix))
           (setq pikt_pref (geocad-normalize-pikt-prefix pikt_pref))
-          (setq z_tags (geocad-trim-string z_tags))
 
           (if (= prefix "")
             (setq prefix "POMIAR")
           )
 
-          ;; ------------------------------------------------------
-          ;; Zapis aktywnej grupy:
-          ;; - do pamieci konkretnego DWG.
-          ;; ------------------------------------------------------
+          ;; Utrwalamy aktualny stan aktywnej grupy.
+          ;; ZTags nie sa juz parametrem grupy, ale przekazujemy z-tags
+          ;; dla kompatybilnosci sygnatury geocad-save-group-settings.
           (geocad-set-cfg "Styl" styl)
           (geocad-set-cfg "Display" display)
           (geocad-set-cfg "TxtH" txt-h)
           (geocad-set-cfg "Prec" z-prec)
           (geocad-set-cfg "Prefix" prefix)
           (geocad-set-cfg "PiktPrefix" pikt_pref)
-          (geocad-set-cfg "ZTags" z_tags)
           (geocad-set-cfg "Color" kolor)
 
-          ;; ------------------------------------------------------
-          ;; Zapis pamieci aktualnej grupy w tym DWG.
-          ;; geocad-save-group-settings zapisuje tez prefix numeracji
-          ;; do listy znanych prefixow tej grupy.
-          ;; ------------------------------------------------------
           (geocad-save-group-settings
             prefix
             kolor
@@ -2943,12 +3198,12 @@
             display
             txt-h
             z-prec
-            z_tags
+            z-tags
           )
 
           ;; ------------------------------------------------------
           ;; Status 2:
-          ;; zapis + aktualizacja obiektow tej samej grupy.
+          ;; aktualizacja obiektow tej samej grupy.
           ;; ------------------------------------------------------
           (if (= status 2)
             (progn
@@ -2965,7 +3220,7 @@
 
               (princ
                 (strcat
-                  "\n[OK] Zapisano parametry i zaktualizowano grupe robocza: "
+                  "\n[OK] Zaktualizowano grupe robocza: "
                   target_prefix
                   "."
                 )
@@ -2997,7 +3252,7 @@
                   display
                   txt-h
                   z-prec
-                  z_tags
+                  z-tags
                 )
               )
 
@@ -3011,14 +3266,14 @@
               )
 
               (princ
-                "\n[OK] Zapisano parametry i zaktualizowano wszystkie grupy w rysunku."
+                "\n[OK] Zaktualizowano wszystkie grupy w rysunku."
               )
             )
           )
         )
         (if saved_in_dialog
           (princ "\n[Zamknieto] Okno zamknieto po wczesniejszej aktywacji/zapisie.")
-          (princ "\n[Zamknieto] Nie zapisano nowych zmian parametrow.")
+          (princ "\n[Zamknieto] Zamknieto GEO_SETUP.")
         )
       )
     )
