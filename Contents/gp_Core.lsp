@@ -1959,15 +1959,18 @@
     pikt_prefix_bundle
     pikt_prefix_select_prefixes pikt_prefix_select_display pikt_prefix_select_idx
     target_prefix
+    dirty
   )
 
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
 
   ;; ------------------------------------------------------
   ;; Odczyt ustawien:
-  ;; 1. DWG,
-  ;; 2. rejestr,
-  ;; 3. default.
+  ;; 1. pamiec konkretnego DWG,
+  ;; 2. default.
+  ;;
+  ;; geocad-get-cfg nie powinien juz dziedziczyc ustawien
+  ;; ze starego rysunku przez rejestr.
   ;; ------------------------------------------------------
   (setq txt-h (geocad-get-cfg "TxtH" "1.0")
         z-prec (geocad-get-cfg "Prec" "2")
@@ -2022,6 +2025,9 @@
   (write-line "  : boxed_column { label = \"Grupa robocza\";" dcl-fn)
   (write-line "    : popup_list { key = \"prefix_select\"; label = \"Wybierz grupe:\"; width = 48; }" dcl-fn)
   (write-line "    : edit_box { key = \"prefix\"; label = \"Prefix grupy (np. DROGI):\"; edit_width = 24; }" dcl-fn)
+  (write-line "    : row { alignment = centered;" dcl-fn)
+  (write-line "      : button { key = \"new_group\"; label = \"Nowa grupa\"; }" dcl-fn)
+  (write-line "    }" dcl-fn)
   (write-line "  }" dcl-fn)
 
   (write-line "  : boxed_column { label = \"Parametry tej grupy\";" dcl-fn)
@@ -2033,6 +2039,10 @@
   (write-line "    : edit_box { key = \"pikt_pref\"; label = \"Prefix numeru pikiety (np. dr_):\"; edit_width = 20; }" dcl-fn)
   (write-line "    : edit_box { key = \"z_tags\"; label = \"Tagi rzednych (np. H, Z, WYS):\"; edit_width = 20; }" dcl-fn)
   (write-line "    : popup_list { key = \"kolor\"; label = \"Kolor podstawowy:\"; list = \"1 - Czerwony\\n2 - Zolty\\n3 - Zielony\\n4 - Cyjan\\n5 - Niebieski\\n6 - Magenta\\n7 - Czarny/Bialy\"; }" dcl-fn)
+  (write-line "  }" dcl-fn)
+
+  (write-line "  : boxed_column { label = \"Status zmian\";" dcl-fn)
+  (write-line "    : text { key = \"dirty_status\"; label = \"Brak zmian.\"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
   (write-line "  : boxed_column { label = \"Akcje\";" dcl-fn)
@@ -2115,25 +2125,36 @@
   (set_tile "styl_rys" (geocad-popup-styl-index styl))
   (set_tile "display_mode" (geocad-popup-display-index display))
 
+  ;; Status poczatkowy.
+  (setq dirty nil)
+  (set_tile "dirty_status" "Brak zmian.")
+
   ;; ------------------------------------------------------
   ;; Akcje DCL.
   ;; ------------------------------------------------------
 
-  ;; Wybor grupy:
-  ;; - popup pokazuje opis z liczba obiektow,
-  ;; - wewnetrznie uzywamy czystego prefixu z prefix_select_prefixes.
-  ;; Po wyborze grupy pola automatycznie laduja jej pamiec z DWG.
-  ;; Potem odswiezamy liste prefixow numeracji dla tej grupy.
+  ;; Wybor istniejacej grupy:
+  ;; - laduje pamiec tej grupy,
+  ;; - odswieza liste prefixow numeracji tej grupy,
+  ;; - oznacza, ze zmieniono aktywny kontekst pracy.
   (action_tile
     "prefix_select"
-    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (progn (geocad-setup-apply-group-to-dialog (nth prefix_select_idx prefix_select_prefixes)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") (get_tile \"pikt_pref\"))) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))))"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - wybrano inna grupe. Kliknij Zapisz, aby utrwalic aktywny kontekst.\") (setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (progn (geocad-setup-apply-group-to-dialog (nth prefix_select_idx prefix_select_prefixes)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") (get_tile \"pikt_pref\"))) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))))"
   )
 
-  ;; Jezeli recznie zmienisz prefix grupy, popup grup wraca na tryb nowej/recznej grupy.
-  ;; Dodatkowo lista prefixow numeracji odswieza sie dla wpisanej grupy.
+  ;; Jawny tryb tworzenia nowej grupy.
+  ;; To jest bardziej stabilne niz poleganie na tym, kiedy DCL odpali akcje edit_box.
+  (action_tile
+    "new_group"
+    "(setq dirty T) (set_tile \"dirty_status\" \"NOWA GRUPA - wpisz Prefix grupy i kliknij Zapisz.\") (setq prefix_select_idx 0) (set_tile \"prefix_select\" \"0\") (set_tile \"prefix\" \"\") (set_tile \"pikt_pref\" \"\") (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list \"\" \"\")) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (mode_tile \"prefix\" 2)"
+  )
+
+  ;; Reczna zmiana prefixu grupy.
+  ;; DCL nie zawsze odpala to per znak; zwykle po opuszczeniu pola.
+  ;; Mimo tego po odpaleniu akcji UI przechodzi w tryb nowej/recznej grupy.
   (action_tile
     "prefix"
-    "(setq prefix_select_idx 0) (set_tile \"prefix_select\" \"0\") (set_tile \"pikt_pref\" \"\") (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") \"\")) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - reczny prefix grupy. Kliknij Zapisz, aby utrwalic ustawienia.\") (setq prefix_select_idx 0) (set_tile \"prefix_select\" \"0\") (set_tile \"pikt_pref\" \"\") (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") \"\")) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))"
   )
 
   ;; Wybor prefixu numeracji:
@@ -2141,14 +2162,44 @@
   ;; ale do pola wpisujemy sam czysty prefix numeracji.
   (action_tile
     "pikt_pref_select"
-    "(setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (if (> pikt_prefix_select_idx 0) (set_tile \"pikt_pref\" (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)))"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - wybrano prefix numeracji. Kliknij Zapisz, aby utrwalic ustawienia.\") (setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (if (> pikt_prefix_select_idx 0) (set_tile \"pikt_pref\" (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)))"
   )
 
-  ;; Jezeli recznie wpiszesz nowy prefix numeracji,
-  ;; popup wraca na tryb nowego/recznego prefixu.
+  ;; Reczny prefix numeracji.
   (action_tile
     "pikt_pref"
-    "(setq pikt_prefix_select_idx 0) (set_tile \"pikt_pref_select\" \"0\")"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - reczny prefix numeracji. Kliknij Zapisz, aby utrwalic ustawienia.\") (setq pikt_prefix_select_idx 0) (set_tile \"pikt_pref_select\" \"0\")"
+  )
+
+  ;; Pozostale parametry grupy.
+  (action_tile
+    "txt_h"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - kliknij Zapisz, aby utrwalic ustawienia.\")"
+  )
+
+  (action_tile
+    "z_prec"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - kliknij Zapisz, aby utrwalic ustawienia.\")"
+  )
+
+  (action_tile
+    "z_tags"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - kliknij Zapisz, aby utrwalic ustawienia.\")"
+  )
+
+  (action_tile
+    "kolor"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - kliknij Zapisz, aby utrwalic ustawienia.\")"
+  )
+
+  (action_tile
+    "styl_rys"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - kliknij Zapisz, aby utrwalic ustawienia.\")"
+  )
+
+  (action_tile
+    "display_mode"
+    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - kliknij Zapisz, aby utrwalic ustawienia.\")"
   )
 
   ;; Status 1:
@@ -2212,8 +2263,7 @@
 
       ;; ------------------------------------------------------
       ;; Zapis aktywnej grupy:
-      ;; - do DWG,
-      ;; - do rejestru jako fallback globalny.
+      ;; - do pamieci konkretnego DWG.
       ;; ------------------------------------------------------
       (geocad-set-cfg "Styl" styl)
       (geocad-set-cfg "Display" display)
@@ -2284,6 +2334,10 @@
       ;; Status 3:
       ;; hurtowo zapisuje te same parametry jako pamiec wszystkich
       ;; istniejacych grup i aktualizuje wszystkie bloki w rysunku.
+      ;;
+      ;; Uwaga:
+      ;; Nie nadpisujemy prefixu numeracji wszystkich grup aktywnym
+      ;; pikt_pref. Kazda grupa zachowuje swoj PiktPrefix.
       ;; ------------------------------------------------------
       (if (= status 3)
         (progn
