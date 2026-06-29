@@ -7,7 +7,8 @@ Refaktor jest nadal w trybie `shadow split`:
 - `Contents/gp_Core.lsp` jest stabilnym loaderem kompatybilnosci.
 - `Contents/core/gp_CoreRuntime.lsp` jest malym runtime/orchestrator markerem.
 - `Contents/core/gp_CoreLegacy.lsp` nadal zawiera pelna stara implementacje i jest ladowany jako bufor bezpieczenstwa.
-- Nowe moduly sa ladowane po legacy i moga nadpisywac wybrane definicje bez zmiany publicznego API.
+- Nowe moduly sa ladowane po legacy i nadpisuja wybrane definicje bez zmiany publicznego API.
+- Pelne `GEO_SETUP` po przeniesieniu do modulow UI zostalo uruchomione i potwierdzone w AutoCAD.
 
 ## Realnie wydzielone moduly core
 
@@ -23,11 +24,10 @@ Refaktor jest nadal w trybie `shadow split`:
 - `Contents/ui/gp_SetupAutosave.lsp` — autosave/walidacja `txt_h`, `z_prec`, stylu, widocznosci i koloru.
 - `Contents/ui/gp_SetupPrefix.lsp` — prefixy numeracji w `GEO_SETUP`.
 - `Contents/ui/gp_SetupGroup.lsp` — ladowanie grupy, tworzenie grupy, dialog nowego prefixu.
-- `Contents/ui/gp_SetupMain.lsp` — pomocniczy helper glownego okna, na razie bez pelnego `geocad-setup-show-main-dialog`.
+- `Contents/ui/gp_SetupMain.lsp` — helpery glownego okna oraz pelne `geocad-setup-show-main-dialog`.
 
-## Celowo jeszcze nie przeniesione w pelni
+## Celowo jeszcze nie robione
 
-- `geocad-setup-show-main-dialog` — najwiekszy i najbardziej kruchy fragment UI/DCL. Zostaje w legacy do osobnego kroku albo do momentu, gdy bedzie czas na test po tej zmianie.
 - Cleanup `gp_CoreLegacy.lsp` — jeszcze nie robiony.
 - Optymalizacja konwersji Blok/Tekst — jeszcze nie robiona.
 - Radar tekstow z eksportu — jeszcze nie przeniesiony.
