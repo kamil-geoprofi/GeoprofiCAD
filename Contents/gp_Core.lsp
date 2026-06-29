@@ -2030,9 +2030,14 @@
     target_prefix
     dirty
     save_result
+    saved_in_dialog
   )
 
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
+
+  ;; Jezeli DWG nie ma jeszcze pamieci GeoprofiCAD,
+  ;; inicjalizujemy ja z realnych warstw/pikiet w tym rysunku.
+  (geocad-ensure-dwg-setup-initialized doc)
 
   ;; ------------------------------------------------------
   ;; Odczyt ustawien:
@@ -2195,8 +2200,9 @@
   (set_tile "styl_rys" (geocad-popup-styl-index styl))
   (set_tile "display_mode" (geocad-popup-display-index display))
 
-  ;; Status poczatkowy.
+    ;; Status poczatkowy.
   (setq dirty nil)
+  (setq saved_in_dialog nil)
   (set_tile "dirty_status" "Brak zmian.")
 
   ;; ------------------------------------------------------
@@ -2209,7 +2215,7 @@
   ;; - oznacza, ze zmieniono aktywny kontekst pracy.
   (action_tile
     "prefix_select"
-    "(setq dirty T) (set_tile \"dirty_status\" \"ZMIENIONO - wybrano inna grupe. Kliknij Zapisz, aby utrwalic aktywny kontekst.\") (setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (progn (geocad-setup-apply-group-to-dialog (nth prefix_select_idx prefix_select_prefixes)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") (get_tile \"pikt_pref\"))) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))))"
+    "(setq dirty T) (setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (progn (set_tile \"dirty_status\" \"ZMIENIONO - wybrano inna grupe. Kliknij Zapisz, aby utrwalic aktywny kontekst.\") (geocad-setup-apply-group-to-dialog (nth prefix_select_idx prefix_select_prefixes)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") (get_tile \"pikt_pref\"))) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))) (progn (set_tile \"dirty_status\" \"NOWA GRUPA - wpisz Prefix grupy i kliknij Zapisz.\") (set_tile \"prefix\" \"\") (set_tile \"pikt_pref\" \"\") (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list \"\" \"\")) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (mode_tile \"prefix\" 2)))"
   )
 
   ;; Jawny tryb tworzenia nowej grupy.
@@ -2276,7 +2282,7 @@
   ;; tylko zapis ustawien aktywnej grupy.
   (action_tile
     "save_only"
-    "(setq save_result (geocad-setup-save-dialog-values)) (setq prefix (nth 0 save_result)) (setq pikt_pref (nth 1 save_result)) (setq kolor (nth 2 save_result)) (setq txt-h (nth 3 save_result)) (setq z-prec (nth 4 save_result)) (setq styl (nth 5 save_result)) (setq display (nth 6 save_result)) (setq z_tags (nth 7 save_result)) (setq prefix_groups (geocad-get-existing-prefixes)) (setq prefix_groups (geocad-add-unique-prefix prefix prefix_groups)) (setq prefix_groups (vl-sort prefix_groups '<)) (setq prefix_select_prefixes (cons \"\" prefix_groups)) (setq prefix_select_display (cons *geocad-new-group-label* (geocad-build-prefix-display-list prefix_groups))) (start_list \"prefix_select\" 3) (mapcar 'add_list prefix_select_display) (end_list) (setq prefix_select_idx (geocad-index-of-string prefix prefix_select_prefixes)) (if (not prefix_select_idx) (setq prefix_select_idx 0)) (set_tile \"prefix_select\" (itoa prefix_select_idx)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq dirty nil) (set_tile \"dirty_status\" (strcat \"ZAPISANO - aktywna grupa: \" prefix \". Okno pozostaje otwarte.\"))"
+    "(setq save_result (geocad-setup-save-dialog-values)) (setq prefix (nth 0 save_result)) (setq pikt_pref (nth 1 save_result)) (setq kolor (nth 2 save_result)) (setq txt-h (nth 3 save_result)) (setq z-prec (nth 4 save_result)) (setq styl (nth 5 save_result)) (setq display (nth 6 save_result)) (setq z_tags (nth 7 save_result)) (setq prefix_groups (geocad-get-existing-prefixes)) (setq prefix_groups (geocad-add-unique-prefix prefix prefix_groups)) (setq prefix_groups (vl-sort prefix_groups '<)) (setq prefix_select_prefixes (cons \"\" prefix_groups)) (setq prefix_select_display (cons *geocad-new-group-label* (geocad-build-prefix-display-list prefix_groups))) (start_list \"prefix_select\" 3) (mapcar 'add_list prefix_select_display) (end_list) (setq prefix_select_idx (geocad-index-of-string prefix prefix_select_prefixes)) (if (not prefix_select_idx) (setq prefix_select_idx 0)) (set_tile \"prefix_select\" (itoa prefix_select_idx)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq saved_in_dialog T) (setq dirty nil) (set_tile \"dirty_status\" (strcat \"ZAPISANO - aktywna grupa: \" prefix \". Okno pozostaje otwarte.\"))"
   )
 
   ;; Status 2:
@@ -2442,8 +2448,11 @@
           )
         )
       )
+        )
+    (if saved_in_dialog
+      (princ "\n[Zamknieto] Okno zamknieto po wczesniejszym zapisie.")
+      (princ "\n[Anulowano] Nie zapisano zmian.")
     )
-    (princ "\n[Anulowano] Nie zapisano zmian.")
   )
 
   (princ)
