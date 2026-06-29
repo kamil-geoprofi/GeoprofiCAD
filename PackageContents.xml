@@ -11,7 +11,19 @@
     <Components>
         <RuntimeRequirements OS="Win64" Platform="AutoCAD" SeriesMin="R24.0" SeriesMax="R25.2" />
         <ComponentEntry AppName="Geoprofi_Config" ModuleName="./Contents/gp_Config.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Core" ModuleName="./Contents/gp_Core.lsp" PerDocument="True" /> 
+        <ComponentEntry AppName="Geoprofi_Core" ModuleName="./Contents/gp_Core.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_Core_Runtime" ModuleName="./Contents/core/gp_CoreRuntime.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_ProjectMemory" ModuleName="./Contents/core/gp_ProjectMemory.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_Numbering" ModuleName="./Contents/core/gp_Numbering.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_CadObjects" ModuleName="./Contents/core/gp_CadObjects.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_Workgroups" ModuleName="./Contents/core/gp_Workgroups.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_PikietaFactory" ModuleName="./Contents/core/gp_PikietaFactory.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_PikietaStyle" ModuleName="./Contents/core/gp_PikietaStyle.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_SetupDialog" ModuleName="./Contents/ui/gp_SetupDialog.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_SetupAutosave" ModuleName="./Contents/ui/gp_SetupAutosave.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_SetupPrefix" ModuleName="./Contents/ui/gp_SetupPrefix.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_SetupGroup" ModuleName="./Contents/ui/gp_SetupGroup.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_SetupMain" ModuleName="./Contents/ui/gp_SetupMain.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Import" ModuleName="./Contents/gp_Import.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Export" ModuleName="./Contents/gp_Export.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Wstaw" ModuleName="./Contents/gp_WstawPikiete.lsp" PerDocument="True" /> 
