@@ -7,6 +7,8 @@
 ;; po gp_CoreLegacy.lsp.
 ;; ======================================================
 
+(setq *geocad-module-projectmemory-loaded* T)
+
 (defun geocad-parse-tags (str / res tmp)
   (setq res '() tmp "")
   (if (and str (/= str ""))
