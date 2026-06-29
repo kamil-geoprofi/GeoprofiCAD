@@ -18,8 +18,7 @@ Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` p
 - `gp_PikietaFactory.lsp` — bazowe tworzenie bloku, kontekst wstawiania i batchowe wstawianie pikiet.
 - `gp_PikietaStyle.lsp` — bazowe funkcje stylu pikiet.
 - `gp_PikietaData.lsp` — model posredni konwersji: DWG -> `PikietaData[]` -> zapis wariantu docelowego.
-- `gp_PikietaStyleOptimized.lsp` — runtime schema + publiczne nadpisania konwersji i auto-apply, przekierowane na `gp_PikietaData.lsp`.
-- `gp_PikietaTextFast.lsp` — szybkie tworzenie tekstowych pikiet zgodne z importem: `entmakex`, bez COM Visible dla nowych tekstow.
+- `gp_PikietaStyleOptimized.lsp` — runtime schema, wspolny szybki writer tekstowy, publiczne nadpisania konwersji i auto-apply.
 - `gp_ExportRadarCompat.lsp` — kompatybilne wrappery dla starego radaru w `gp_Export.lsp`, przekierowane do `gp_TextRadar.lsp`.
 
 ## Zasady
@@ -28,4 +27,5 @@ Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` p
 - Logika okien i `GEO_SETUP` powinna trafiac do `Contents/ui/`.
 - `PackageContents.xml` jest zrodlem prawdy dla kolejnosci ladowania.
 - Schemat pikiety powinien byc czytany z `gp_PikietaSchema.lsp`; nie wpisujemy recznie `Pikieta_Geo`, `NR`, `H`, `Z`, `RZEDNA` w nowych miejscach.
+- Import/wstawianie i konwersja Blok -> Tekst powinny uzywac tej samej `geocad-create-text-pikieta`.
 - Konwersje stylu pikiet powinny isc przez model posredni `PikietaData`, a nie mieszac odczytu, zapisu i modyfikacji obiektow w jednej petli.
