@@ -13,7 +13,6 @@
         <ComponentEntry AppName="Geoprofi_Config" ModuleName="./Contents/gp_Config.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Core" ModuleName="./Contents/gp_Core.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Core_Runtime" ModuleName="./Contents/core/gp_CoreRuntime.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Core_Legacy" ModuleName="./Contents/core/gp_CoreLegacy.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_ProjectMemory" ModuleName="./Contents/core/gp_ProjectMemory.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Numbering" ModuleName="./Contents/core/gp_Numbering.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_CadObjects" ModuleName="./Contents/core/gp_CadObjects.lsp" PerDocument="True" />
