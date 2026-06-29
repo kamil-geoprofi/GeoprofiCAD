@@ -22,7 +22,8 @@
 ;; - geocad-next-number-for-group-pikt-prefix
 ;; - GP:PobierzNastepnyNumer
 ;;
-;; Na tym commicie nie zmieniamy definicji funkcji.
+;; Status: mapa API. Definicje funkcji sa jeszcze w gp_CoreLegacy.lsp.
 ;; ======================================================
 
+(setq *geocad-module-numbering-loaded* T)
 (princ)

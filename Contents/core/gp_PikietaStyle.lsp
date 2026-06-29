@@ -14,7 +14,8 @@
 ;; - geocad-setup-apply-current-group-params
 ;; - geocad-update-existing
 ;;
-;; Na tym commicie nie ruszamy jeszcze optymalizacji ssget.
+;; Status: mapa API. Definicje funkcji sa jeszcze w gp_CoreLegacy.lsp.
 ;; ======================================================
 
+(setq *geocad-module-pikietastyle-loaded* T)
 (princ)

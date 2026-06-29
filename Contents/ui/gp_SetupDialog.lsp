@@ -17,7 +17,8 @@
 ;; - geocad-setup-show-main-dialog
 ;; - c:GEO_SETUP
 ;;
-;; Na tym commicie nie zmieniamy definicji funkcji.
+;; Status: mapa API. Definicje funkcji sa jeszcze w gp_CoreLegacy.lsp.
 ;; ======================================================
 
+(setq *geocad-module-setupdialog-loaded* T)
 (princ)

@@ -18,7 +18,8 @@
 ;; - geocad-find-nearest-text-object
 ;; - geocad-update-text-object
 ;;
-;; Na tym commicie nie zmieniamy definicji funkcji.
+;; Status: mapa API. Definicje funkcji sa jeszcze w gp_CoreLegacy.lsp.
 ;; ======================================================
 
+(setq *geocad-module-cadobjects-loaded* T)
 (princ)

@@ -16,7 +16,8 @@
 ;; - geocad-pikieta-batch-end
 ;; - geocad-wstaw-pikiete-full
 ;;
-;; Na tym commicie nie zmieniamy definicji funkcji.
+;; Status: mapa API. Definicje funkcji sa jeszcze w gp_CoreLegacy.lsp.
 ;; ======================================================
 
+(setq *geocad-module-pikietafactory-loaded* T)
 (princ)
