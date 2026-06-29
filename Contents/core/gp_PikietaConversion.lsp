@@ -9,24 +9,28 @@
 (setq *geocad-module-pikietaconversion-loaded* T)
 
 (defun geocad-pikieta-write-data-as-text
-  (data txt-h z-prec display lay-pt lay-nr lay-h / item pt nr count)
+  (data txt-h z-prec display lay-pt lay-nr lay-h / item pt nr made count)
   (setq count 0)
   (foreach item data
     (setq pt (geocad-pikieta-data-get item 'pt))
     (setq nr (geocad-pikieta-data-get item 'nr))
     (if pt
       (progn
-        (geocad-create-text-pikieta
-          pt
-          nr
-          txt-h
-          z-prec
-          display
-          lay-pt
-          lay-nr
-          lay-h
+        (setq made
+          (geocad-create-text-pikieta
+            pt
+            nr
+            txt-h
+            z-prec
+            display
+            lay-pt
+            lay-nr
+            lay-h
+          )
         )
-        (setq count (1+ count))
+        (if made
+          (setq count (1+ count))
+        )
       )
     )
   )
@@ -34,26 +38,30 @@
 )
 
 (defun geocad-pikieta-write-data-as-blocks
-  (doc data txt-h z-prec display lay-pt lay-nr lay-h / item pt nr count)
+  (doc data txt-h z-prec display lay-pt lay-nr lay-h / item pt nr made count)
   (setq count 0)
   (foreach item data
     (setq pt (geocad-pikieta-data-get item 'pt))
     (setq nr (geocad-pikieta-data-get item 'nr))
     (if pt
       (progn
-        (geocad-insert-pikieta-block-from-data
-          doc
-          pt
-          nr
-          txt-h
-          z-prec
-          display
-          lay-pt
-          lay-nr
-          lay-h
-          nil
+        (setq made
+          (geocad-insert-pikieta-block-from-data
+            doc
+            pt
+            nr
+            txt-h
+            z-prec
+            display
+            lay-pt
+            lay-nr
+            lay-h
+            nil
+          )
         )
-        (setq count (1+ count))
+        (if made
+          (setq count (1+ count))
+        )
       )
     )
   )
@@ -168,7 +176,10 @@
               lay-h
             )
           )
-          (geocad-pikieta-data-delete-sources data)
+          (if (= count (length data))
+            (geocad-pikieta-data-delete-sources data)
+            (princ "\n[BLAD] Konwersja przerwana: nie wszystkie pikiety zostaly poprawnie utworzone, zrodla zostawiono bez zmian.")
+          )
           (vla-EndUndoMark doc)
         )
       )
@@ -208,7 +219,10 @@
               lay-h
             )
           )
-          (geocad-pikieta-data-delete-sources data)
+          (if (= count (length data))
+            (geocad-pikieta-data-delete-sources data)
+            (princ "\n[BLAD] Konwersja przerwana: nie wszystkie pikiety zostaly poprawnie utworzone, zrodla zostawiono bez zmian.")
+          )
           (vla-EndUndoMark doc)
         )
       )

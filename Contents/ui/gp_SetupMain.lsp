@@ -135,6 +135,8 @@
   (write-line "  : boxed_column { label = \"Prefix numeru pikiety\";" dcl-fn)
   (write-line "    : popup_list { key = \"pikt_pref_select\"; label = \"Aktywny prefix:\"; width = 48; }" dcl-fn)
   (write-line "    : text { key = \"next_number_status\"; label = \"Nastepny numer: -\"; }" dcl-fn)
+  (write-line "    : toggle { key = \"imported_unlock\"; label = \"Odbezpiecz dopisywanie do grupy imported (bez prefixu)\"; }" dcl-fn)
+  (write-line "    : text { key = \"imported_unlock_status\"; label = \" \"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
   (write-line "  : boxed_column { label = \"Parametry aktywnej grupy\";" dcl-fn)
@@ -238,6 +240,7 @@
   (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle))
   (setq pikt_prefix_select_display (cadr pikt_prefix_bundle))
   (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))
+  (geocad-setup-refresh-imported-unlock-ui prefix)
 
   ;; Status poczatkowy.
   (setq saved_in_dialog nil)
@@ -261,7 +264,7 @@
   ;; - istniejaca grupa aktywuje sie natychmiast.
   (action_tile
     "prefix_select"
-    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (= prefix_select_idx 0) (done_dialog 10) (progn (setq prefix (nth prefix_select_idx prefix_select_prefixes)) (setq active_result (geocad-setup-load-group-to-main-dialog prefix)) (setq prefix (nth 0 active_result)) (setq pikt_pref (nth 1 active_result)) (setq kolor (nth 2 active_result)) (setq txt-h (nth 3 active_result)) (setq z-prec (nth 4 active_result)) (setq styl (nth 5 active_result)) (setq display (nth 6 active_result)) (setq active_result (geocad-setup-save-active-values active_result)) (geocad-setup-update-param-context prefix pikt_pref) (geocad-setup-clear-param-statuses) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNA GRUPA: \" prefix \". Aktywny prefix: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
+    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (= prefix_select_idx 0) (done_dialog 10) (progn (setq prefix (nth prefix_select_idx prefix_select_prefixes)) (setq active_result (geocad-setup-load-group-to-main-dialog prefix)) (setq prefix (nth 0 active_result)) (setq pikt_pref (nth 1 active_result)) (setq kolor (nth 2 active_result)) (setq txt-h (nth 3 active_result)) (setq z-prec (nth 4 active_result)) (setq styl (nth 5 active_result)) (setq display (nth 6 active_result)) (setq active_result (geocad-setup-save-active-values active_result)) (geocad-setup-update-param-context prefix pikt_pref) (geocad-setup-clear-param-statuses) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (geocad-setup-refresh-imported-unlock-ui prefix) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNA GRUPA: \" prefix \". Aktywny prefix: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
   )
 
   ;; Wybor prefixu numeracji:
@@ -311,6 +314,11 @@
   (action_tile
     "z_tags"
     "(setq z-tags (geocad-setup-save-z-tags z-tags))"
+  )
+
+  (action_tile
+    "imported_unlock"
+    "(geocad-setup-toggle-imported-unlock prefix)"
   )
 
   (action_tile "cancel" "(done_dialog 0)")

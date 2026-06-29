@@ -14,8 +14,9 @@
 ;; zeby gp_Core.lsp nie puchl jako monolit.
 ;; ======================================================
 
-(defun geocad-load-relative (rel / base path)
-  (setq base (vl-filename-directory (findfile "gp_Core.lsp")))
+(defun geocad-load-relative (rel / core-file base path)
+  (setq core-file (findfile "gp_Core.lsp"))
+  (setq base (if core-file (vl-filename-directory core-file) nil))
 
   (if base
     (setq path (strcat base "\\" rel))

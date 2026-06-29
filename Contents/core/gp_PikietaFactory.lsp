@@ -174,10 +174,23 @@
   (
     batch space pt-list nr-str show-z
     /
-    ctx next-nr actual-nr
+    ctx next-nr actual-nr group
   )
 
   (setq ctx (geocad-ctx-get 'ctx batch))
+  (setq group (geocad-ctx-get 'prefix ctx))
+
+  (if
+    (and
+      (geocad-imported-group-p group)
+      (not (geocad-imported-group-unlocked-p group))
+      (or (not nr-str) (= nr-str ""))
+    )
+    (progn
+      (alert "Aktywna grupa imported ma zalozony bezpiecznik. W GEO_SETUP odbezpiecz grupe albo przelacz na grupe generated.")
+      (exit)
+    )
+  )
 
   (if (or (not nr-str) (= nr-str ""))
     (progn

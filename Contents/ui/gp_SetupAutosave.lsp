@@ -123,6 +123,53 @@
   )
 )
 
+
+(defun geocad-setup-confirm-text-style-risk
+  (/ dcl-file dcl-fn dcl-id status)
+  ;; Potwierdzenie ryzyka przed przejsciem na wariant POINT + TEXT.
+  ;; Ten styl jest obslugiwany, ale pozniejsza zamiana Tekst -> Blok
+  ;; wymaga parowania osobnych obiektow po polozeniu, wiec przy gestych
+  ;; pikietach moze byc mniej pewna niz praca na atrybutach bloku.
+  (setq status 0)
+  (setq dcl-file (vl-filename-mktemp "geosetup_text_style_warning.dcl"))
+  (setq dcl-fn (open dcl-file "w"))
+
+  (write-line "GeoTextStyleWarning : dialog { label = \"GEO_SETUP - Ostrzezenie\";" dcl-fn)
+  (write-line "  : boxed_column { label = \"Tryb Zwykly Punkt + Tekst\";" dcl-fn)
+  (write-line "    : text { label = \"Ten tryb zapisuje pikiete jako osobne obiekty: POINT, NR i H.\"; }" dcl-fn)
+  (write-line "    : text { label = \"Przy wielu pikietach blisko siebie pozniejsza zamiana Tekst -> Blok\"; }" dcl-fn)
+  (write-line "    : text { label = \"moze blednie sparowac teksty z punktami.\"; }" dcl-fn)
+  (write-line "    : spacer { height = 1; }" dcl-fn)
+  (write-line "    : text { label = \"Zalecany i najbezpieczniejszy styl pracy: Inteligentny Blok.\"; }" dcl-fn)
+  (write-line "  }" dcl-fn)
+  (write-line "  : row { alignment = centered;" dcl-fn)
+  (write-line "    : button { key = \"accept_risk\"; label = \"Akceptuje ryzyko\"; is_default = true; }" dcl-fn)
+  (write-line "    : cancel_button { label = \"Anuluj\"; }" dcl-fn)
+  (write-line "  }" dcl-fn)
+  (write-line "}" dcl-fn)
+  (close dcl-fn)
+
+  (setq dcl-id (load_dialog dcl-file))
+  (if
+    (and
+      dcl-id
+      (new_dialog "GeoTextStyleWarning" dcl-id)
+    )
+    (progn
+      (action_tile "accept_risk" "(done_dialog 1)")
+      (action_tile "cancel" "(done_dialog 0)")
+      (setq status (start_dialog))
+    )
+  )
+
+  (if dcl-id
+    (unload_dialog dcl-id)
+  )
+  (vl-file-delete dcl-file)
+
+  (= status 1)
+)
+
 (defun geocad-setup-autosave-style
   (doc group-prefix old-styl kolor txt-h z-prec display / idx new-styl)
   (setq idx (get_tile "styl_rys"))
@@ -131,6 +178,20 @@
     (if (= idx "1")
       "Tekst"
       "Blok"
+    )
+  )
+
+  (if
+    (and
+      (/= new-styl old-styl)
+      (= new-styl "Tekst")
+      (not (geocad-setup-confirm-text-style-risk))
+    )
+    (progn
+      (set_tile "styl_rys" (geocad-popup-styl-index old-styl))
+      (set_tile "styl_status" "ANULOWANO - pozostawiono Inteligentny Blok.")
+      (set_tile "dirty_status" "Nie zmieniono stylu mapy.")
+      (setq new-styl old-styl)
     )
   )
 

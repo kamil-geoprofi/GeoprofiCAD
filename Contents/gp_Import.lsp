@@ -72,11 +72,181 @@
 (defun guess-format-multi (lines delim-code / guesses vote max-vote best-guess count) (setq guesses '()) (foreach line lines (setq vote (guess-single-line (safe-tokenize line delim-code))) (if vote (setq guesses (cons vote guesses)))) (if guesses (progn (setq max-vote 0 best-guess "1") (foreach u '("1" "2" "3" "4" "5" "6") (setq count (length (vl-remove-if-not '(lambda (x) (= x u)) guesses))) (if (> count max-vote) (progn (setq max-vote count) (setq best-guess u)))) best-guess) "1"))  
 (defun round-to (val prec) (if (and val prec) (/ (fix (+ (* val (expt 10.0 prec)) 0.5)) (float (expt 10.0 prec))) val))
 
+(defun geocad-import-layer-token-from-file
+  (filename / base raw result i code ch prev-us)
+  ;; Nazwa grupy imported pochodzi z nazwy pliku, ale musi byc bezpieczna
+  ;; jako prefix warstw AutoCAD. Zostawiamy litery/cyfry, reszta -> "_".
+  (setq base (vl-filename-base filename))
+  (setq raw (strcase (if base base "IMPORT")))
+  (setq result "")
+  (setq prev-us nil)
+  (setq i 1)
+
+  (while (<= i (strlen raw))
+    (setq ch (substr raw i 1))
+    (setq code (ascii ch))
+    (if
+      (or
+        (and (>= code 48) (<= code 57))
+        (and (>= code 65) (<= code 90))
+      )
+      (progn
+        (setq result (strcat result ch))
+        (setq prev-us nil)
+      )
+      (if (not prev-us)
+        (progn
+          (setq result (strcat result "_"))
+          (setq prev-us T)
+        )
+      )
+    )
+    (setq i (1+ i))
+  )
+
+  (setq result (vl-string-trim "_" result))
+  (if (= result "")
+    (setq result "IMPORT")
+  )
+  result
+)
+
+
+(defun geocad-import-format-has-nr-p (fmt c-nr-val / col)
+  (cond
+    ((member fmt '("1" "2" "5" "6")) T)
+    ((= fmt "7")
+      (setq col (atoi (vl-princ-to-string c-nr-val)))
+      (> col 0)
+    )
+    (T nil)
+  )
+)
+
+(defun geocad-import-update-use-file-nr-tile (fmt c-nr-val / can-use)
+  (setq can-use (geocad-import-format-has-nr-p fmt c-nr-val))
+  (if can-use
+    (mode_tile "use_file_nr" 0)
+    (progn
+      (set_tile "use_file_nr" "0")
+      (mode_tile "use_file_nr" 1)
+    )
+  )
+  can-use
+)
+
+(defun geocad-import-group-exists-p (group / pref)
+  (setq pref (geocad-normalize-layer-prefix group))
+  (and
+    (/= pref "")
+    (or
+      (member pref (geocad-get-saved-prefixes))
+      (> (geocad-count-objects-in-group pref) 0)
+    )
+  )
+)
+
+(defun geocad-import-ensure-txt-suffix (group / pref)
+  (setq pref (geocad-normalize-layer-prefix group))
+  (if (not (geocad-string-ends-with-p pref "_TXT"))
+    (setq pref (strcat pref "_TXT"))
+  )
+  pref
+)
+
+(defun geocad-import-resolve-imported-group
+  (filename / default-group group dcl-file dcl-fn dcl-id status raw msg)
+  ;; Jezeli grupa z nazwy pliku juz istnieje, uzytkownik musi podac inna.
+  (setq default-group
+    (geocad-import-ensure-txt-suffix
+      (geocad-import-layer-token-from-file filename)
+    )
+  )
+  (setq group default-group)
+  (setq status 1)
+
+  (while (and (= status 1) (geocad-import-group-exists-p group))
+    (setq dcl-file (vl-filename-mktemp "geo_import_group_name.dcl"))
+    (setq dcl-fn (open dcl-file "w"))
+    (write-line "GeoImportGroupName : dialog { label = \"Import TXT - nazwa grupy\";" dcl-fn)
+    (write-line "  : boxed_column { label = \"Grupa imported juz istnieje\";" dcl-fn)
+    (write-line (strcat "    : text { label = \"Grupa " group " juz istnieje.\"; }") dcl-fn)
+    (write-line "    : text { label = \"Zmien nazwe grupy dla tego importu.\"; }" dcl-fn)
+    (write-line "    : edit_box { key = \"group_name\"; label = \"Nazwa grupy:\"; edit_width = 32; }" dcl-fn)
+    (write-line "    : text { key = \"status\"; label = \"Dopisz np. _ETAP2 albo _POPRAWKA.\"; }" dcl-fn)
+    (write-line "  }" dcl-fn)
+    (write-line "  ok_cancel;" dcl-fn)
+    (write-line "}" dcl-fn)
+    (close dcl-fn)
+
+    (setq dcl-id (load_dialog dcl-file))
+    (if (new_dialog "GeoImportGroupName" dcl-id)
+      (progn
+        (set_tile "group_name" group)
+        (action_tile "accept" "(setq raw (get_tile \"group_name\")) (done_dialog 1)")
+        (action_tile "cancel" "(done_dialog 0)")
+        (setq status (start_dialog))
+      )
+      (setq status 0)
+    )
+    (if dcl-id (unload_dialog dcl-id))
+    (vl-file-delete dcl-file)
+
+    (if (= status 1)
+      (progn
+        (setq group (geocad-normalize-layer-prefix (geocad-import-layer-token-from-file raw)))
+        (if (= group "")
+          (setq group default-group)
+        )
+        (if (geocad-import-group-exists-p group)
+          (alert (strcat "Grupa " group " tez juz istnieje. Podaj inna nazwe."))
+        )
+      )
+    )
+  )
+
+  (if (= status 0)
+    nil
+    group
+  )
+)
+
+(defun geocad-import-prepare-imported-group
+  (doc filename group / kolor txt-h z-prec styl display)
+  ;; Import z nazwami z pliku dostaje wlasna grupe <NAZWA_PLIKU>_TXT.
+  ;; W tej grupie nie uzywamy prefixu numeracji pikiet - NR/H sa z pliku.
+  (setq group (geocad-normalize-layer-prefix group))
+
+  (setq kolor (geocad-get-cfg "Color" "3"))
+  (setq txt-h (geocad-get-cfg "TxtH" "1.0"))
+  (setq z-prec (geocad-get-cfg "Prec" "2"))
+  (setq styl (geocad-get-cfg "Styl" "Blok"))
+  (setq display (geocad-get-cfg "Display" "Oba"))
+
+  (geocad-set-cfg "Prefix" group)
+  (geocad-set-cfg "PiktPrefix" "")
+  (geocad-save-group-settings
+    group
+    kolor
+    ""
+    styl
+    display
+    txt-h
+    z-prec
+    (geocad-get-cfg "ZTags" "H,Z,RZEDNA")
+  )
+  (geocad-group-cfg-write group "GroupType" "imported")
+  (geocad-group-cfg-write group "ImportFile" (vl-filename-base filename))
+
+  group
+)
+
+
 (defun c:IMPORT_POINTS_V3_7 ( / filename file line raw-line sample-lines format-choice is-flat final-delim  
                             px py pz pz-geom nr count valid acadObj doc mspace prec-geom-str prec-geom tokens  
                             total-valid current-valid idx-first idx-mid idx-last delim-code current-delim line-first line-mid line-last c1 c2 sys-info len current-format temp-delim dialog-running 
                             dcl-file dcl-fn dcl-id status minX minY maxX maxY dXX dYY margX margY marg p1 p2 
-                            c-nr c-x c-y c-z delim-str do-zoom use-file-nr file-has-nr old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z batch)
+                            c-nr c-x c-y c-z delim-str do-zoom use-file-nr file-has-nr old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z batch import-group can-use-file-nr)
   
   (setq old-err *error* *error* geocad-err) 
   (setq old-cmdecho (getvar "CMDECHO") old-attmode (getvar "ATTMODE") old-dimzin (getvar "DIMZIN") old-pdmode (getvar "PDMODE") old-pdsize (getvar "PDSIZE") old-osmode (getvar "OSMODE"))  
@@ -146,6 +316,9 @@
       
     (setq dcl-id (load_dialog dcl-file)) (if (not (new_dialog "GeoFormat" dcl-id)) (progn (alert "Blad okna.") (exit)))  
     (set_tile "fmt_choice" current-format) (set_tile "delim_choice" (itoa current-delim)) (set_tile "flat_2d" is-flat) (set_tile "prec_geom" prec-geom-str) (set_tile "auto_zoom" do-zoom) (set_tile "use_file_nr" use-file-nr) (if (< len 3) (mode_tile "accept" 1))
+    (geocad-import-update-use-file-nr-tile current-format c-nr)
+    (action_tile "fmt_choice" "(geocad-import-update-use-file-nr-tile $value (get_tile \"col_nr\"))")
+    (action_tile "col_nr" "(geocad-import-update-use-file-nr-tile (get_tile \"fmt_choice\") $value)")
     (action_tile "delim_choice" "(setq temp-delim (atoi $value) current-format (get_tile \"fmt_choice\") is-flat (get_tile \"flat_2d\") prec-geom-str (get_tile \"prec_geom\") do-zoom (get_tile \"auto_zoom\") use-file-nr (get_tile \"use_file_nr\") c-nr (get_tile \"col_nr\") c-x (get_tile \"col_x\") c-y (get_tile \"col_y\") c-z (get_tile \"col_z\")) (done_dialog 2)")
     (action_tile "accept" "(setq current-format (get_tile \"fmt_choice\") is-flat (get_tile \"flat_2d\") prec-geom-str (get_tile \"prec_geom\") do-zoom (get_tile \"auto_zoom\") use-file-nr (get_tile \"use_file_nr\") final-delim current-delim c-nr (get_tile \"col_nr\") c-x (get_tile \"col_x\") c-y (get_tile \"col_y\") c-z (get_tile \"col_z\")) (done_dialog 1)")
     (action_tile "cancel" "(done_dialog 0)")  
@@ -155,6 +328,24 @@
   
   (setq format-choice current-format) (if (= format-choice "7") (setq c-nr (atoi c-nr) c-x (atoi c-x) c-y (atoi c-y) c-z (atoi c-z))) 
   (setq prec-geom (if (= prec-geom-str "") nil (atoi prec-geom-str)))
+
+  (if
+    (and
+      (= use-file-nr "1")
+      (or
+        (member format-choice '("1" "2" "5" "6"))
+        (and (= format-choice "7") (> c-nr 0))
+      )
+    )
+    (progn
+      (setq import-group (geocad-import-resolve-imported-group filename))
+      (if (not import-group)
+        (progn (setq *error* old-err) (exit))
+      )
+      (setq import-group (geocad-import-prepare-imported-group doc filename import-group))
+      (princ (strcat "\nImport z nazwami z pliku: utworzono/aktywowano grupe " import-group "."))
+    )
+  )
   
   (vla-StartUndoMark doc)
 

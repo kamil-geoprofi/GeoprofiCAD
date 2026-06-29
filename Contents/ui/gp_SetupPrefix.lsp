@@ -26,28 +26,41 @@
     (setq group "POMIAR")
   )
 
+  (if (geocad-imported-group-p group)
+    (setq pref "")
+  )
+
   (setq prefixes
-    (geocad-get-known-pikt-prefixes-for-group
-      group
-      pref
+    (if (geocad-imported-group-p group)
+      '()
+      (geocad-get-known-pikt-prefixes-for-group
+        group
+        pref
+      )
     )
   )
 
   (setq select-prefixes
-    (append
+    (if (geocad-imported-group-p group)
       (list "")
-      prefixes
-      (list *geocad-add-pikt-prefix-marker*)
+      (append
+        (list "")
+        prefixes
+        (list *geocad-add-pikt-prefix-marker*)
+      )
     )
   )
 
   (setq display
-    (append
-      (list
-        (geocad-setup-pikt-prefix-display-label group "")
+    (if (geocad-imported-group-p group)
+      (list "imported: nazwy pikiet pochodza z pliku TXT")
+      (append
+        (list
+          (geocad-setup-pikt-prefix-display-label group "")
+        )
+        (geocad-build-pikt-prefix-display-list group prefixes)
+        (list *geocad-add-pikt-prefix-label*)
       )
-      (geocad-build-pikt-prefix-display-list group prefixes)
-      (list *geocad-add-pikt-prefix-label*)
     )
   )
 
@@ -64,7 +77,16 @@
   )
 
   (set_tile "pikt_pref_select" (itoa idx))
-  (set_tile "next_number_status" (geocad-setup-next-number-status group pref))
+  (if (geocad-imported-group-p group)
+    (progn
+      (mode_tile "pikt_pref_select" 1)
+      (set_tile "next_number_status" "Imported: prefix numeracji wylaczony")
+    )
+    (progn
+      (mode_tile "pikt_pref_select" 0)
+      (set_tile "next_number_status" (geocad-setup-next-number-status group pref))
+    )
+  )
 
   (list select-prefixes display idx)
 )
@@ -109,6 +131,10 @@
     (setq group "POMIAR")
   )
 
+  (if (geocad-imported-group-p group)
+    (setq pref "")
+  )
+
   ;; Aktywny kontekst DWG.
   (geocad-set-cfg "Prefix" group)
   (geocad-set-cfg "PiktPrefix" pref)
@@ -147,6 +173,51 @@
   (geocad-set-cfg "Color" kolor)
 
   values
+)
+
+
+(defun geocad-setup-refresh-imported-unlock-ui (group-prefix / group unlocked)
+  (setq group (geocad-normalize-layer-prefix group-prefix))
+  (if (= group "")
+    (setq group "POMIAR")
+  )
+
+  (if (geocad-imported-group-p group)
+    (progn
+      (setq unlocked (geocad-imported-group-unlocked-p group))
+      (mode_tile "imported_unlock" 0)
+      (set_tile "imported_unlock" (if unlocked "1" "0"))
+      (set_tile
+        "imported_unlock_status"
+        (if unlocked
+          "Bezpiecznik zdjety: mozna dopisywac bez prefixu."
+          "Imported: dopisywanie/generowanie zablokowane."
+        )
+      )
+    )
+    (progn
+      (set_tile "imported_unlock" "0")
+      (mode_tile "imported_unlock" 1)
+      (set_tile "imported_unlock_status" "Generated: prefix numeracji dziala normalnie.")
+    )
+  )
+
+  T
+)
+
+(defun geocad-setup-toggle-imported-unlock (group-prefix / group val)
+  (setq group (geocad-normalize-layer-prefix group-prefix))
+  (setq val (get_tile "imported_unlock"))
+
+  (if (geocad-imported-group-p group)
+    (progn
+      (geocad-set-imported-group-unlocked group (= val "1"))
+      (geocad-setup-refresh-imported-unlock-ui group)
+    )
+    (geocad-setup-refresh-imported-unlock-ui group)
+  )
+
+  (= val "1")
 )
 
 (princ)

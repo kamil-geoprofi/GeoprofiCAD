@@ -130,6 +130,9 @@
       (setq dY (* txt-h 0.7))
       (setq tol (max 1.0 (* txt-h 8.0)))
 
+      ;; Teksty sa juz rozdzielone po warstwach skonfigurowanych dla grupy:
+      ;; ETYKIETA_NR i ETYKIETA_H. Nie filtrujemy ich po kategorii radaru,
+      ;; bo warstwa jest jednoznacznym zrodlem typu opisu.
       (setq nr-item
         (geocad-text-radar-find-nearest
           (list (+ px dX) (+ py dY) pz)
@@ -148,34 +151,43 @@
         )
       )
 
-      (setq nr-obj (geocad-text-radar-item-object nr-item))
-      (setq h-obj  (geocad-text-radar-item-object h-item))
+      ;; Punkt tekstowej pikiety jest kompletny tylko wtedy, gdy ma oba
+      ;; powiazane opisy. Jezeli nie ma pary, nie wolno tworzyc bloku i kasowac
+      ;; punktu, bo mogl to byc zwykly POINT na warstwie albo uszkodzony opis.
+      (if
+        (and nr-item h-item)
+        (progn
+          (setq nr-obj (geocad-text-radar-item-object nr-item))
+          (setq h-obj  (geocad-text-radar-item-object h-item))
 
-      (setq nr (geocad-text-radar-item-text nr-item))
-      (if (= nr "")
-        (setq nr "---")
-      )
+          (setq nr (geocad-text-radar-item-text nr-item))
+          (if (= nr "")
+            (setq nr "---")
+          )
 
-      (setq z
-        (geocad-pikieta-data-safe-z
-          (geocad-text-radar-item-text h-item)
-          pz
+          (setq z
+            (geocad-pikieta-data-safe-z
+              (geocad-text-radar-item-text h-item)
+              pz
+            )
+          )
+
+          (list
+            (geocad-pikieta-data-make
+              (list px py z)
+              nr
+              z
+              "text"
+              pt-obj
+              nr-obj
+              h-obj
+              nil
+            )
+            (geocad-text-radar-remove-item nr-item nr-items)
+            (geocad-text-radar-remove-item h-item h-items)
+          )
         )
-      )
-
-      (list
-        (geocad-pikieta-data-make
-          (list px py z)
-          nr
-          z
-          "text"
-          pt-obj
-          nr-obj
-          h-obj
-          nil
-        )
-        (geocad-text-radar-remove-item nr-item nr-items)
-        (geocad-text-radar-remove-item h-item h-items)
+        (list nil nr-items h-items)
       )
     )
     (list nil nr-items h-items)
