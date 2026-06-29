@@ -19,6 +19,7 @@ Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` p
 - `gp_PikietaStyle.lsp` — bazowe funkcje stylu pikiet.
 - `gp_PikietaData.lsp` — model posredni konwersji: DWG -> `PikietaData[]` -> zapis wariantu docelowego.
 - `gp_PikietaStyleOptimized.lsp` — runtime schema + publiczne nadpisania konwersji i auto-apply, przekierowane na `gp_PikietaData.lsp`.
+- `gp_PikietaTextFast.lsp` — szybkie tworzenie tekstowych pikiet zgodne z importem: `entmakex`, bez COM Visible dla nowych tekstow.
 - `gp_ExportRadarCompat.lsp` — kompatybilne wrappery dla starego radaru w `gp_Export.lsp`, przekierowane do `gp_TextRadar.lsp`.
 
 ## Zasady
