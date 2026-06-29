@@ -1,10 +1,20 @@
 ;; ======================================================
-;; GEOPROFICAD - PIKIETA STYLE SHADOW MODULE
+;; GEOPROFICAD - PIKIETA STYLE
 ;; ======================================================
 ;;
-;; Shadow split: docelowo trafi tu konwersja Blok/Tekst oraz
-;; aktualizacja istniejacych pikiet. Na tym etapie nie ruszamy
-;; jeszcze logiki ssget ani optymalizacji.
+;; Konwersje Blok/Tekst i aktualizacja istniejacych pikiet.
+;; Shadow split: pelna implementacja nadal jest w gp_CoreLegacy.lsp.
+;; Ten plik jest ladowany po legacy i docelowo przejmie ponizsze API:
+;;
+;; - geocad-create-text-pikieta
+;; - geocad-insert-pikieta-block-from-data
+;; - geocad-convert-blocks-to-text
+;; - geocad-convert-text-to-blocks
+;; - geocad-update-text-style-existing
+;; - geocad-setup-apply-current-group-params
+;; - geocad-update-existing
+;;
+;; Na tym commicie nie ruszamy jeszcze optymalizacji ssget.
 ;; ======================================================
 
 (princ)

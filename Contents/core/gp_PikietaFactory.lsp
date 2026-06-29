@@ -1,10 +1,22 @@
 ;; ======================================================
-;; GEOPROFICAD - PIKIETA FACTORY SHADOW MODULE
+;; GEOPROFICAD - PIKIETA FACTORY
 ;; ======================================================
 ;;
-;; Shadow split: docelowo trafi tu tworzenie bloku Pikieta_Geo,
-;; przygotowanie kontekstu i batchowe wstawianie pikiet.
-;; Na tym etapie legacy nadal zawiera dzialajaca implementacje.
+;; Tworzenie i batchowe wstawianie pikiet.
+;; Shadow split: pelna implementacja nadal jest w gp_CoreLegacy.lsp.
+;; Ten plik jest ladowany po legacy i docelowo przejmie ponizsze API:
+;;
+;; - geocad-stworz-blok-pikieta
+;; - geocad-ctx-get
+;; - geocad-ctx-set
+;; - geocad-pikieta-prepare-context
+;; - geocad-wstaw-pikiete-with-context
+;; - geocad-pikieta-batch-start
+;; - geocad-pikieta-batch-insert
+;; - geocad-pikieta-batch-end
+;; - geocad-wstaw-pikiete-full
+;;
+;; Na tym commicie nie zmieniamy definicji funkcji.
 ;; ======================================================
 
 (princ)
