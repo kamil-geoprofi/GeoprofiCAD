@@ -3123,17 +3123,20 @@
   ;; - indeks 0 otwiera osobny dialog tworzenia nowej grupy,
   ;; - istniejaca grupa aktywuje sie natychmiast.
   (action_tile
-  "pikt_pref_select"
-  "(setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (setq selected_pikt_prefix (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)) (if (= selected_pikt_prefix *geocad-add-pikt-prefix-marker*) (done_dialog 11) (progn (setq pikt_pref (geocad-setup-activate-pikt-prefix prefix selected_pikt_prefix)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (geocad-setup-update-param-context prefix pikt_pref) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNY PREFIX NUMERACJI: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
+    "prefix_select"
+    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (= prefix_select_idx 0) (done_dialog 10) (progn (setq prefix (nth prefix_select_idx prefix_select_prefixes)) (setq active_result (geocad-setup-load-group-to-main-dialog prefix)) (setq prefix (nth 0 active_result)) (setq pikt_pref (nth 1 active_result)) (setq kolor (nth 2 active_result)) (setq txt-h (nth 3 active_result)) (setq z-prec (nth 4 active_result)) (setq styl (nth 5 active_result)) (setq display (nth 6 active_result)) (setq active_result (geocad-setup-save-active-values active_result)) (geocad-setup-update-param-context prefix pikt_pref) (geocad-setup-clear-param-statuses) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNA GRUPA: \" prefix \". Aktywny prefix: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
   )
 
   ;; Wybor prefixu numeracji:
   ;; - (bez prefixu) dziala od razu,
   ;; - istniejacy prefix dziala od razu,
   ;; - --- DODAJ NOWY PREFIX --- otwiera osobny dialog.
+  ;;
+  ;; Prefix numeracji NIE jest profilem parametrow wygladu,
+  ;; wiec zmiana prefixu NIE czysci statusow parametrow.
   (action_tile
     "pikt_pref_select"
-    "(setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (setq selected_pikt_prefix (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)) (if (= selected_pikt_prefix *geocad-add-pikt-prefix-marker*) (done_dialog 11) (progn (setq pikt_pref (geocad-setup-activate-pikt-prefix prefix selected_pikt_prefix)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (geocad-setup-update-param-context prefix pikt_pref) (geocad-setup-clear-param-statuses) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNY PREFIX NUMERACJI: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
+    "(setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (setq selected_pikt_prefix (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)) (if (= selected_pikt_prefix *geocad-add-pikt-prefix-marker*) (done_dialog 11) (progn (setq pikt_pref (geocad-setup-activate-pikt-prefix prefix selected_pikt_prefix)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (geocad-setup-update-param-context prefix pikt_pref) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNY PREFIX NUMERACJI: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
   )
 
   ;; Auto-zapis parametrow grupy.
