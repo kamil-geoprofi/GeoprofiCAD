@@ -1,22 +1,24 @@
 # GeoprofiCAD core
 
-Ten folder zawiera logike ladowana przez `PackageContents.xml` po `Contents/gp_Core.lsp`.
+Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` po `Contents/gp_Core.lsp`.
 
-Aktualny etap refaktoru jest zachowawczy:
+`Contents/gp_Core.lsp` zostaje stabilnym punktem kompatybilnosci dla starszych plikow, ktore nadal moga robic `(load "gp_Core.lsp")`. Realna implementacja jest rozdzielona na moduly w `Contents/core/` i `Contents/ui/`.
 
-- `Contents/gp_Core.lsp` jest stabilnym loaderem kompatybilnosci.
-- `gp_CoreRuntime.lsp` jest technicznym punktem przejscia / orkiestratorem.
-- `gp_CoreLegacy.lsp` zawiera jeszcze nierozdzielona implementacje starego core.
-- Moduly `gp_ProjectMemory.lsp`, `gp_Numbering.lsp`, `gp_CadObjects.lsp`, `gp_PikietaFactory.lsp`, `gp_PikietaStyle.lsp` istnieja juz jako docelowe miejsca dla czystego podzialu.
+`gp_CoreLegacy.lsp` nadal istnieje w repo jako nieaktywny backup po refaktorze, ale nie jest juz ladowany przez `PackageContents.xml`.
 
-Na razie moduly poza `gp_ProjectMemory.lsp` sa shellami typu shadow split. Legacy nadal daje pelna dzialajaca implementacje. Nastepny krok to przenoszenie definicji z `gp_CoreLegacy.lsp` do tych plikow bez zmian logiki, a dopiero potem cleanup legacy.
+## Moduly core
 
-Docelowy podzial:
-
-- `gp_ProjectMemory.lsp` — LDATA, ustawienia DWG, profile grup roboczych.
-- `gp_Numbering.lsp` — prefixy i liczniki numeracji pikiet.
-- `gp_CadObjects.lsp` — niskopoziomowe helpery AutoCAD/VLAX.
-- `gp_PikietaFactory.lsp` — tworzenie i batchowe wstawianie pikiet.
+- `gp_CoreRuntime.lsp` — lekki runtime/orchestrator marker.
+- `gp_ProjectMemory.lsp` — LDATA, ustawienia DWG, `geocad-get-cfg`, `geocad-set-cfg`.
+- `gp_Numbering.lsp` — prefixy numeracji, liczniki i `GP:PobierzNastepnyNumer`.
+- `gp_CadObjects.lsp` — niskopoziomowe helpery AutoCAD/VLAX, obiekty CAD, punkty i teksty.
+- `gp_Workgroups.lsp` — grupy robocze, skaner warstw, pamiec grup i inicjalizacja ustawien DWG.
+- `gp_PikietaFactory.lsp` — tworzenie bloku, kontekst wstawiania i batchowe wstawianie pikiet.
 - `gp_PikietaStyle.lsp` — konwersje Blok/Tekst i aktualizacja istniejacych pikiet.
 
-Zasada refaktoru: najpierw przeniesienie bez zmian logiki, potem dopiero optymalizacje.
+## Zasady
+
+- Logika wspolna dla importu, eksportu i wstawiania powinna trafiac do `core/`.
+- Logika okien i `GEO_SETUP` powinna trafiac do `Contents/ui/`.
+- `PackageContents.xml` jest zrodlem prawdy dla kolejnosci ladowania.
+- Optymalizacje robimy dopiero po zachowaniu starego publicznego API.
