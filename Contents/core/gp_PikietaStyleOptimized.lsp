@@ -4,7 +4,8 @@
 ;;
 ;; Optymalizacje konwersji tekstowych pikiet.
 ;; Ten modul laduje sie po gp_PikietaStyle.lsp i nadpisuje tylko
-;; funkcje, ktore w starej wersji robily kosztowne ssget w petli.
+;; funkcje, ktore w starej wersji robily kosztowne ssget w petli
+;; albo wykonywaly zbedny drugi przebieg po konwersji.
 ;; ======================================================
 
 (setq *geocad-module-pikietastyleoptimized-loaded* T)
@@ -310,6 +311,81 @@
   )
 
   count
+)
+
+(defun geocad-setup-apply-current-group-params
+  (
+    doc prefix kolor-str txt-h-str z-prec-str styl display
+    /
+    pref kolor txt-h z-prec converted-count
+  )
+  ;; Glowny auto-apply dla GEO_SETUP.
+  ;;
+  ;; Optymalizacja krytyczna:
+  ;; Przy zmianie stylu Blok -> Tekst nie wolno po konwersji odpalac
+  ;; pelnego update tekstowych pikiet po tej samej grupie.
+  ;; Konwersja sama tworzy teksty z aktualnymi parametrami, wiec drugi
+  ;; przebieg jest zbedny i kosztowny przy tysiacach pikiet.
+
+  (setq pref (geocad-normalize-layer-prefix prefix))
+
+  (if (= pref "")
+    (setq pref "POMIAR")
+  )
+
+  (setq kolor (atoi kolor-str))
+  (setq txt-h (atof txt-h-str))
+  (setq z-prec (atoi z-prec-str))
+
+  (if (= styl "Tekst")
+    (progn
+      (setq converted-count
+        (geocad-convert-blocks-to-text
+          doc
+          pref
+          kolor
+          txt-h
+          z-prec
+          display
+        )
+      )
+
+      ;; Jezeli byly bloki, konwersja juz utworzyla poprawne POINT/TEXT.
+      ;; Update odpalamy tylko wtedy, gdy blokow nie bylo, czyli grupa
+      ;; byla juz tekstowa i faktycznie trzeba przestawic istniejace teksty.
+      (if (= converted-count 0)
+        (geocad-update-text-style-existing
+          doc
+          pref
+          kolor
+          txt-h
+          z-prec
+          display
+        )
+      )
+    )
+    (progn
+      (geocad-convert-text-to-blocks
+        doc
+        pref
+        kolor
+        txt-h
+        z-prec
+        display
+      )
+
+      (geocad-update-existing
+        doc
+        pref
+        kolor-str
+        txt-h-str
+        z-prec-str
+        display
+      )
+    )
+  )
+
+  T
 )
 
 (princ)
