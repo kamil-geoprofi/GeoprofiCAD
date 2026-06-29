@@ -1482,6 +1482,13 @@
     "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (geocad-setup-apply-group-to-dialog (nth prefix_select_idx prefix_select_prefixes)))"
   )
 
+  ;; Jezeli recznie zmienisz prefix, popup wraca na tryb nowej/recznej grupy.
+  ;; Dzieki temu UI nie sugeruje, ze nadal edytujesz grupe wybrana z listy.
+  (action_tile
+    "prefix"
+    "(setq prefix_select_idx 0) (set_tile \"prefix_select\" \"0\")"
+  )
+
   ;; Status 1:
   ;; tylko zapis ustawien aktywnej grupy.
   (action_tile
