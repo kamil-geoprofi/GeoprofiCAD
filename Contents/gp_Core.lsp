@@ -19,7 +19,32 @@
   (reverse res)
 )
 
-(defun geocad-get-cfg (klucz domyslny / val)
+(defun geocad-setup-ldata-get (key / res)
+  (setq res
+    (vl-catch-all-apply
+      'vlax-ldata-get
+      (list *geocad-ldata-setup-dict* key)
+    )
+  )
+
+  (if (vl-catch-all-error-p res)
+    nil
+    res
+  )
+)
+
+
+(defun geocad-setup-ldata-put (key value)
+  (vl-catch-all-apply
+    'vlax-ldata-put
+    (list *geocad-ldata-setup-dict* key value)
+  )
+
+  value
+)
+
+
+(defun geocad-get-global-cfg (klucz domyslny / val)
   (setq val (vl-registry-read *geocad-registry-path* klucz))
 
   (if (not val)
@@ -29,6 +54,31 @@
     )
     val
   )
+)
+
+
+(defun geocad-get-cfg (klucz domyslny / val)
+  ;; Kolejnosc:
+  ;; 1. pamiec konkretnego DWG,
+  ;; 2. rejestr Windows jako fallback globalny,
+  ;; 3. wartosc domyslna.
+  (setq val (geocad-setup-ldata-get klucz))
+
+  (if val
+    val
+    (geocad-get-global-cfg klucz domyslny)
+  )
+)
+
+
+(defun geocad-set-cfg (klucz value)
+  ;; Zapisujemy do DWG oraz do rejestru.
+  ;;
+  ;; DWG = pamiec projektu.
+  ;; Rejestr = fallback dla nowych rysunkow.
+  (geocad-setup-ldata-put klucz value)
+  (vl-registry-write *geocad-registry-path* klucz value)
+  value
 )
 
 ;; ======================================================
@@ -217,7 +267,7 @@
   ;; Ustawienia czytamy raz na serie pikiet.
   (setq txt-h (atof (geocad-get-cfg "TxtH" "1.0")))
   (setq z-prec (atoi (geocad-get-cfg "Prec" "2")))
-  (setq prefix (geocad-trim-string (geocad-get-cfg "Prefix" "POMIAR")))
+  (setq prefix (geocad-normalize-layer-prefix (geocad-get-cfg "Prefix" "POMIAR")))
   (setq kolor (atoi (geocad-get-cfg "Color" "3")))
   (setq styl (geocad-get-cfg "Styl" "Blok"))
   (setq display (geocad-get-cfg "Display" "Oba"))
@@ -509,62 +559,151 @@
 )
 
 ;; ======================================================
-;; SKANER I AKTUALIZATOR ISTNIEJĄCYCH PIKIET
+;; SKANER, PAMIEC GRUP ROBOCZYCH I AKTUALIZATOR PIKIET
 ;; ======================================================
 
-(defun geocad-get-existing-prefixes ( / ss i obj lay pref lst layers lay-obj)
-  (setq lst '())
+(setq *geocad-new-group-label* "--- wpisz recznie / nowa grupa ---")
+(setq *geocad-all-groups-label* "--- WSZYSTKIE W RYSUNKU ---")
 
-  ;; ------------------------------------------------------
-  ;; 1. Stara logika: skan blokow Pikieta_Geo.
-  ;; Zachowujemy to, bo aktualizator grup historycznie bazowal na blokach.
-  ;; ------------------------------------------------------
-  (setq ss (ssget "X" '((0 . "INSERT") (2 . "Pikieta_Geo"))))
 
-  (if ss
-    (progn
-      (setq i 0)
+(defun geocad-index-of-string
+  (val lst / idx result)
+  (setq idx 0)
+  (setq result nil)
 
-      (while (< i (sslength ss))
-        (setq obj (vlax-ename->vla-object (ssname ss i)))
-        (setq lay (vla-get-Layer obj))
-
-        (setq pref (geocad-managed-layer-prefix-from-name lay))
-
-        ;; Fallback dla starych / nietypowych rysunkow:
-        ;; jezeli blok Pikieta_Geo siedzi na warstwie bez standardowego sufiksu,
-        ;; zachowujemy stare zachowanie i traktujemy nazwe warstwy jako grupe.
-        (if (not pref)
-          (setq pref lay)
-        )
-
-        (setq lst (geocad-add-unique-string pref lst))
-        (setq i (1+ i))
+  (while
+    (and
+      lst
+      (not result)
+    )
+    (if (= val (car lst))
+      (setq result idx)
+      (progn
+        (setq idx (1+ idx))
+        (setq lst (cdr lst))
       )
     )
   )
 
-  ;; ------------------------------------------------------
-  ;; 2. Nowa logika: skan tabeli warstw.
-  ;; Dzieki temu lista wykryje tez grupy, ktore maja warstwy,
-  ;; ale aktualnie nie maja blokow Pikieta_Geo.
-  ;; ------------------------------------------------------
-  (setq layers (vla-get-Layers (vla-get-ActiveDocument (vlax-get-acad-object))))
+  result
+)
 
-  (vlax-for lay-obj layers
-    (setq lay (vla-get-Name lay-obj))
-    (setq pref (geocad-managed-layer-prefix-from-name lay))
 
-    (if pref
-      (setq lst (geocad-add-unique-string pref lst))
+(defun geocad-safe-atoi (val default / n)
+  (setq n (atoi (if val val "")))
+
+  (if (= n 0)
+    default
+    n
+  )
+)
+
+
+(defun geocad-group-cfg-key
+  (prefix key)
+  (strcat
+    "Group."
+    (geocad-normalize-layer-prefix prefix)
+    "."
+    key
+  )
+)
+
+
+(defun geocad-group-cfg-read
+  (prefix key default / val)
+  (setq val
+    (geocad-setup-ldata-get
+      (geocad-group-cfg-key prefix key)
     )
   )
 
-  (vl-sort lst '<)
+  (if val val default)
 )
 
-(defun geocad-layer-object-if-exists (layers layname / res)
-  (if (and layers layname (/= layname ""))
+
+(defun geocad-group-cfg-write
+  (prefix key value)
+  (if
+    (and
+      prefix
+      (/= (geocad-normalize-layer-prefix prefix) "")
+    )
+    (geocad-setup-ldata-put
+      (geocad-group-cfg-key prefix key)
+      value
+    )
+  )
+
+  value
+)
+
+
+(defun geocad-get-saved-prefixes
+  (/ raw result pref)
+  (setq result '())
+  (setq raw (geocad-setup-ldata-get "KnownPrefixes"))
+
+  (if
+    (and
+      raw
+      (listp raw)
+    )
+    (foreach pref raw
+      (setq result (geocad-add-unique-prefix pref result))
+    )
+  )
+
+  result
+)
+
+
+(defun geocad-save-known-prefix
+  (prefix / pref lst)
+  (setq pref (geocad-normalize-layer-prefix prefix))
+
+  (if (/= pref "")
+    (progn
+      (setq lst (geocad-get-saved-prefixes))
+      (setq lst (geocad-add-unique-prefix pref lst))
+      (geocad-setup-ldata-put "KnownPrefixes" lst)
+    )
+  )
+
+  pref
+)
+
+
+(defun geocad-save-group-settings
+  (prefix kolor pikt_pref styl display txt-h z-prec z_tags / pref)
+  (setq pref (geocad-normalize-layer-prefix prefix))
+
+  (if (/= pref "")
+    (progn
+      (geocad-save-known-prefix pref)
+
+      (geocad-group-cfg-write pref "Color" kolor)
+      (geocad-group-cfg-write pref "PiktPrefix" pikt_pref)
+      (geocad-group-cfg-write pref "Styl" styl)
+      (geocad-group-cfg-write pref "Display" display)
+      (geocad-group-cfg-write pref "TxtH" txt-h)
+      (geocad-group-cfg-write pref "Prec" z-prec)
+      (geocad-group-cfg-write pref "ZTags" z_tags)
+    )
+  )
+
+  pref
+)
+
+
+(defun geocad-layer-object-if-exists
+  (layers layname / res)
+  (if
+    (and
+      layers
+      layname
+      (/= layname "")
+    )
     (progn
       (setq res
         (vl-catch-all-apply
@@ -583,7 +722,228 @@
 )
 
 
-(defun geocad-update-layer-color-if-exists (layers layname kolor / lay)
+(defun geocad-layer-color-if-exists
+  (doc layname / layers lay)
+  (setq layers (vla-get-Layers doc))
+  (setq lay (geocad-layer-object-if-exists layers layname))
+
+  (if lay
+    (itoa (vla-get-Color lay))
+    nil
+  )
+)
+
+
+(defun geocad-group-layer-color
+  (doc prefix fallback / color)
+  ;; Kolor domyslny grupy:
+  ;; 1. warstwa PIKIETY,
+  ;; 2. warstwa ETYKIETA_NR,
+  ;; 3. warstwa ETYKIETA_H,
+  ;; 4. warstwa POLYLINES_FROM_MULTI,
+  ;; 5. fallback.
+  (setq prefix (geocad-normalize-layer-prefix prefix))
+
+  (setq color
+    (geocad-layer-color-if-exists
+      doc
+      (geocad-layer-name prefix *geocad-layer-type-points*)
+    )
+  )
+
+  (if (not color)
+    (setq color
+      (geocad-layer-color-if-exists
+        doc
+        (geocad-layer-name prefix *geocad-layer-type-label-nr*)
+      )
+    )
+  )
+
+  (if (not color)
+    (setq color
+      (geocad-layer-color-if-exists
+        doc
+        (geocad-layer-name prefix *geocad-layer-type-label-h*)
+      )
+    )
+  )
+
+  (if (not color)
+    (setq color
+      (geocad-layer-color-if-exists
+        doc
+        (geocad-layer-name prefix *geocad-layer-type-polyline-multi*)
+      )
+    )
+  )
+
+  (if color color fallback)
+)
+
+
+(defun geocad-count-objects-on-layer
+  (layname / ss)
+  (if
+    (and
+      layname
+      (/= layname "")
+      (tblsearch "LAYER" layname)
+    )
+    (progn
+      (setq ss
+        (ssget
+          "_X"
+          (list (cons 8 layname))
+        )
+      )
+
+      (if ss
+        (sslength ss)
+        0
+      )
+    )
+    0
+  )
+)
+
+
+(defun geocad-count-objects-in-group
+  (prefix / pref count)
+  (setq pref (geocad-normalize-layer-prefix prefix))
+  (setq count 0)
+
+  (if (/= pref "")
+    (progn
+      (setq count
+        (+
+          count
+          (geocad-count-objects-on-layer
+            (geocad-layer-name pref *geocad-layer-type-points*)
+          )
+        )
+      )
+
+      (setq count
+        (+
+          count
+          (geocad-count-objects-on-layer
+            (geocad-layer-name pref *geocad-layer-type-label-nr*)
+          )
+        )
+      )
+
+      (setq count
+        (+
+          count
+          (geocad-count-objects-on-layer
+            (geocad-layer-name pref *geocad-layer-type-label-h*)
+          )
+        )
+      )
+
+      (setq count
+        (+
+          count
+          (geocad-count-objects-on-layer
+            (geocad-layer-name pref *geocad-layer-type-polyline-multi*)
+          )
+        )
+      )
+    )
+  )
+
+  count
+)
+
+
+(defun geocad-prefix-display-label
+  (prefix / pref count)
+  (setq pref (geocad-normalize-layer-prefix prefix))
+  (setq count (geocad-count-objects-in-group pref))
+
+  (strcat
+    pref
+    "  |  obiekty: "
+    (itoa count)
+  )
+)
+
+
+(defun geocad-build-prefix-display-list
+  (prefixes / result pref)
+  (setq result '())
+
+  (foreach pref prefixes
+    (setq result
+      (append
+        result
+        (list (geocad-prefix-display-label pref))
+      )
+    )
+  )
+
+  result
+)
+
+
+(defun geocad-get-prefixes-from-layers
+  (doc / layers lay-obj lay pref lst)
+  (setq lst '())
+  (setq layers (vla-get-Layers doc))
+
+  (vlax-for lay-obj layers
+    (setq lay (vla-get-Name lay-obj))
+    (setq pref (geocad-managed-layer-prefix-from-name lay))
+
+    (if pref
+      (setq lst (geocad-add-unique-prefix pref lst))
+    )
+  )
+
+  lst
+)
+
+
+(defun geocad-get-existing-prefixes
+  (/ doc lst saved pref current)
+  ;; Lista grup roboczych:
+  ;; - grupy wykryte z realnych warstw GeoprofiCAD,
+  ;; - grupy zapisane w pamieci konkretnego DWG,
+  ;; - aktualnie aktywna grupa.
+  ;;
+  ;; Wszystko jest normalizowane do czystego prefixu.
+  (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
+  (setq lst '())
+
+  (foreach pref (geocad-get-prefixes-from-layers doc)
+    (setq lst (geocad-add-unique-prefix pref lst))
+  )
+
+  (setq saved (geocad-get-saved-prefixes))
+
+  (foreach pref saved
+    (setq lst (geocad-add-unique-prefix pref lst))
+  )
+
+  (setq current
+    (geocad-normalize-layer-prefix
+      (geocad-get-cfg "Prefix" "POMIAR")
+    )
+  )
+
+  (if (= current "")
+    (setq current "POMIAR")
+  )
+
+  (setq lst (geocad-add-unique-prefix current lst))
+
+  (vl-sort lst '<)
+)
+
+
+(defun geocad-update-layer-color-if-exists
+  (layers layname kolor / lay)
   (setq lay (geocad-layer-object-if-exists layers layname))
 
   (if lay
@@ -595,46 +955,195 @@
 )
 
 
-(defun geocad-update-managed-layer-colors (doc prefix kolor / layers)
+(defun geocad-update-managed-layer-colors
+  (doc prefix kolor / layers pref)
   ;; Aktualizuje kolor wszystkich istniejacych warstw danej grupy.
   ;; Nie tworzy pustych warstw, jezeli ich nie ma.
-  (if (and doc prefix (/= prefix ""))
+  (setq pref (geocad-normalize-layer-prefix prefix))
+
+  (if
+    (and
+      doc
+      pref
+      (/= pref "")
+    )
     (progn
       (setq layers (vla-get-Layers doc))
 
       (geocad-update-layer-color-if-exists
         layers
-        (geocad-layer-name prefix *geocad-layer-type-points*)
+        (geocad-layer-name pref *geocad-layer-type-points*)
         kolor
       )
 
       (geocad-update-layer-color-if-exists
         layers
-        (geocad-layer-name prefix *geocad-layer-type-label-nr*)
+        (geocad-layer-name pref *geocad-layer-type-label-nr*)
         kolor
       )
 
       (geocad-update-layer-color-if-exists
         layers
-        (geocad-layer-name prefix *geocad-layer-type-label-h*)
+        (geocad-layer-name pref *geocad-layer-type-label-h*)
         kolor
       )
 
       (geocad-update-layer-color-if-exists
         layers
-        (geocad-layer-name prefix *geocad-layer-type-polyline-multi*)
+        (geocad-layer-name pref *geocad-layer-type-polyline-multi*)
         kolor
       )
     )
   )
 )
 
+
+(defun geocad-popup-color-index
+  (kolor / n)
+  (setq n (atoi kolor))
+
+  (if
+    (and
+      (>= n 1)
+      (<= n 7)
+    )
+    (itoa (1- n))
+    "2"
+  )
+)
+
+
+(defun geocad-popup-styl-index
+  (styl)
+  (if (= styl "Tekst")
+    "1"
+    "0"
+  )
+)
+
+
+(defun geocad-popup-display-index
+  (display)
+  (cond
+    ((= display "Oba") "0")
+    ((= display "Numer") "1")
+    ((= display "Rzedna") "2")
+    ((= display "Brak") "3")
+    (T "0")
+  )
+)
+
+
+(defun geocad-display-from-popup-index
+  (idx)
+  (cond
+    ((= idx "0") "Oba")
+    ((= idx "1") "Numer")
+    ((= idx "2") "Rzedna")
+    ((= idx "3") "Brak")
+    (T "Oba")
+  )
+)
+
+
+(defun geocad-setup-apply-group-to-dialog
+  (prefix / doc pref fallback-color kolor pikt-pref styl display txt-h z-prec z-tags)
+  ;; Wywoluje sie po wyborze grupy roboczej w popupie.
+  ;;
+  ;; Jezeli grupa ma pamiec w DWG, przywraca jej ustawienia.
+  ;; Jezeli nie ma pamieci, bierze:
+  ;; - kolor z istniejacych warstw grupy,
+  ;; - reszte z aktualnych/globalnych ustawien.
+  (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
+  (setq pref (geocad-normalize-layer-prefix prefix))
+
+  (if (/= pref "")
+    (progn
+      (setq fallback-color
+        (itoa
+          (1+
+            (atoi
+              (get_tile "kolor")
+            )
+          )
+        )
+      )
+
+      (setq kolor
+        (geocad-group-cfg-read
+          pref
+          "Color"
+          (geocad-group-layer-color doc pref fallback-color)
+        )
+      )
+
+      (setq pikt-pref
+        (geocad-group-cfg-read
+          pref
+          "PiktPrefix"
+          (get_tile "pikt_pref")
+        )
+      )
+
+      (setq styl
+        (geocad-group-cfg-read
+          pref
+          "Styl"
+          (if (= (get_tile "styl_rys") "1") "Tekst" "Blok")
+        )
+      )
+
+      (setq display
+        (geocad-group-cfg-read
+          pref
+          "Display"
+          (geocad-display-from-popup-index (get_tile "display_mode"))
+        )
+      )
+
+      (setq txt-h
+        (geocad-group-cfg-read
+          pref
+          "TxtH"
+          (get_tile "txt_h")
+        )
+      )
+
+      (setq z-prec
+        (geocad-group-cfg-read
+          pref
+          "Prec"
+          (get_tile "z_prec")
+        )
+      )
+
+      (setq z-tags
+        (geocad-group-cfg-read
+          pref
+          "ZTags"
+          (get_tile "z_tags")
+        )
+      )
+
+      (set_tile "prefix" pref)
+      (set_tile "pikt_pref" pikt-pref)
+      (set_tile "txt_h" txt-h)
+      (set_tile "z_prec" z-prec)
+      (set_tile "z_tags" z-tags)
+      (set_tile "kolor" (geocad-popup-color-index kolor))
+      (set_tile "styl_rys" (geocad-popup-styl-index styl))
+      (set_tile "display_mode" (geocad-popup-display-index display))
+    )
+  )
+)
+
+
 (defun geocad-update-existing
   (
     doc target_prefix kolor-str txt-h-str z-prec-str display
     /
     ss i ent obj pt px py pz
-    lay-pt lay-nr lay-h lay-obj
+    lay-pt lay-nr lay-h
     kolor txt-h z-prec dX dY vis-nr vis-h
     pref
   )
@@ -663,11 +1172,9 @@
   )
 
   ;; ------------------------------------------------------
-  ;; Aktualizacja kolorow wszystkich istniejacych warstw grupy,
-  ;; w tym warstwy polilinii z NIWELACJA_MULTI.
-  ;; Dziala nawet wtedy, gdy grupa ma tylko polilinie i nie ma blokow.
+  ;; Aktualizacja kolorow warstw grupy.
   ;; ------------------------------------------------------
-  (if (= target_prefix "--- WSZYSTKIE W RYSUNKU ---")
+  (if (= target_prefix *geocad-all-groups-label*)
     (foreach pref (geocad-get-existing-prefixes)
       (geocad-update-managed-layer-colors doc pref kolor)
     )
@@ -675,9 +1182,9 @@
   )
 
   ;; ------------------------------------------------------
-  ;; Wybór bloków do aktualizacji
+  ;; Wybor blokow do aktualizacji.
   ;; ------------------------------------------------------
-  (if (= target_prefix "--- WSZYSTKIE W RYSUNKU ---")
+  (if (= target_prefix *geocad-all-groups-label*)
     (setq ss
       (ssget "X" '((0 . "INSERT") (2 . "Pikieta_Geo")))
     )
@@ -701,7 +1208,6 @@
       (vla-StartUndoMark doc)
 
       (setq i 0)
-      (setq lay-obj (vla-get-Layers doc))
 
       (while (< i (sslength ss))
         (setq ent (ssname ss i))
@@ -719,16 +1225,11 @@
         )
 
         ;; ------------------------------------------------------
-        ;; Ustalenie grupy/prefiksu z aktualnej warstwy bloku.
-        ;; Dla standardowych warstw:
-        ;; POMIAR_PIKIETY -> POMIAR
+        ;; Ustalenie grupy z aktualnej warstwy bloku.
         ;; ------------------------------------------------------
         (setq lay-pt (vla-get-Layer obj))
         (setq pref (geocad-managed-layer-prefix-from-name lay-pt))
 
-        ;; Fallback:
-        ;; - przy aktualizacji konkretnej grupy uzywamy target_prefix,
-        ;; - przy "wszystkie" zostawiamy oryginalna warstwe punktu.
         (if pref
           (progn
             (setq lay-pt (geocad-layer-name pref *geocad-layer-type-points*))
@@ -736,25 +1237,30 @@
             (setq lay-h  (geocad-layer-name pref *geocad-layer-type-label-h*))
           )
           (progn
-            (if (= target_prefix "--- WSZYSTKIE W RYSUNKU ---")
+            (if (= target_prefix *geocad-all-groups-label*)
               (progn
+                ;; Legacy fallback:
+                ;; jezeli stary blok nie siedzi na standardowej warstwie,
+                ;; zostaje na swojej warstwie.
                 (setq lay-pt (vla-get-Layer obj))
                 (setq lay-nr lay-pt)
                 (setq lay-h lay-pt)
               )
               (progn
-                (setq lay-pt (geocad-layer-name target_prefix *geocad-layer-type-points*))
-                (setq lay-nr (geocad-layer-name target_prefix *geocad-layer-type-label-nr*))
-                (setq lay-h  (geocad-layer-name target_prefix *geocad-layer-type-label-h*))
+                (setq pref (geocad-normalize-layer-prefix target_prefix))
+                (setq lay-pt (geocad-layer-name pref *geocad-layer-type-points*))
+                (setq lay-nr (geocad-layer-name pref *geocad-layer-type-label-nr*))
+                (setq lay-h  (geocad-layer-name pref *geocad-layer-type-label-h*))
               )
             )
           )
         )
 
-        ;; Upewniamy sie, ze warstwy istnieja i maja aktualny kolor.
-        (vla-put-color (vla-add lay-obj lay-pt) kolor)
-        (vla-put-color (vla-add lay-obj lay-nr) kolor)
-        (vla-put-color (vla-add lay-obj lay-h) kolor)
+        ;; Warstwy tworzymy bezpiecznie tylko tutaj, bo aktualizujemy
+        ;; realne bloki i musimy miec gdzie przeniesc atrybuty.
+        (geocad-ensure-layer doc lay-pt kolor)
+        (geocad-ensure-layer doc lay-nr kolor)
+        (geocad-ensure-layer doc lay-h kolor)
 
         ;; Blok zostaje na warstwie punktow swojej grupy.
         (vla-put-Layer obj lay-pt)
@@ -793,14 +1299,17 @@
         (strcat
           "\n[SUKCES] Zaktualizowano "
           (itoa i)
-          " pikiet dla grupy: "
+          " blokow pikiet dla grupy: "
           target_prefix
         )
       )
     )
-    (princ "\n[INFO] Nie znaleziono blokow do aktualizacji. Zaktualizowano kolor istniejacych warstw grupy, jezeli istnialy.")
+    (princ
+      "\n[INFO] Nie znaleziono blokow do aktualizacji. Zaktualizowano kolor istniejacych warstw grupy, jezeli istnialy."
+    )
   )
 )
+
 
 ;; ======================================================
 ;; INTERFEJS: GEO_SETUP
@@ -814,166 +1323,283 @@
     col-idx styl-idx disp-idx
     doc
     prefix_groups
-    prefix_list target_idx target_prefix
-    prefix_select_list prefix_select_idx
+    prefix_select_prefixes prefix_select_display prefix_select_idx
+    update_prefixes update_display target_idx target_prefix
   )
 
-  (setq doc (vla-get-ActiveDocument (vlax-get-acad-object))) 
-  (setq txt-h (geocad-get-cfg "TxtH" "1.0") 
-        z-prec (geocad-get-cfg "Prec" "2") 
-        prefix (geocad-get-cfg "Prefix" "POMIAR") 
-        pikt_pref (geocad-get-cfg "PiktPrefix" "") 
-        z_tags (geocad-get-cfg "ZTags" "H, Z, RZEDNA")
-        kolor (geocad-get-cfg "Color" "3") 
-        styl (geocad-get-cfg "Styl" "Blok") 
-        display (geocad-get-cfg "Display" "Oba")) 
+  (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
 
-  (setq prefix (geocad-trim-string prefix))
+  ;; ------------------------------------------------------
+  ;; Odczyt ustawien:
+  ;; 1. DWG,
+  ;; 2. rejestr,
+  ;; 3. default.
+  ;; ------------------------------------------------------
+  (setq txt-h (geocad-get-cfg "TxtH" "1.0")
+        z-prec (geocad-get-cfg "Prec" "2")
+        prefix (geocad-get-cfg "Prefix" "POMIAR")
+        pikt_pref (geocad-get-cfg "PiktPrefix" "")
+        z_tags (geocad-get-cfg "ZTags" "H, Z, RZEDNA")
+        kolor (geocad-get-cfg "Color" "3")
+        styl (geocad-get-cfg "Styl" "Blok")
+        display (geocad-get-cfg "Display" "Oba")
+  )
+
+  (setq prefix (geocad-normalize-layer-prefix prefix))
 
   (if (= prefix "")
     (setq prefix "POMIAR")
   )
 
-  ;; Lista realnych grup z rysunku + aktualnie zapisany prefix.
+  ;; ------------------------------------------------------
+  ;; Lista grup roboczych:
+  ;; - z warstw,
+  ;; - z pamieci DWG,
+  ;; - aktualny prefix.
+  ;; ------------------------------------------------------
   (setq prefix_groups (geocad-get-existing-prefixes))
+  (setq prefix_groups (geocad-add-unique-prefix prefix prefix_groups))
+  (setq prefix_groups (vl-sort prefix_groups '<))
 
-  ;; Aktualnie zapisany Prefix tez pokazujemy jako grupe,
-  ;; nawet jezeli jeszcze nie ma dla niego warstw ani blokow.
-  (setq prefix_groups (geocad-add-unique-string prefix prefix_groups))
+  ;; Prefixy logiczne dla wyboru aktywnej grupy.
+  ;; Pierwsza pozycja oznacza reczny wpis.
+  (setq prefix_select_prefixes
+    (cons "" prefix_groups)
+  )
 
-  ;; Lista do wyboru aktywnego prefixu dla nowych pikiet.
-  ;; Pierwsza pozycja zostawia mozliwosc recznego wpisania nowej grupy.
-  (setq prefix_select_list
-    (cons "--- wpisz recznie / nowa grupa ---" prefix_groups)
+  ;; Teksty widoczne w popupie.
+  ;; Tu pokazujemy liczbe obiektow.
+  (setq prefix_select_display
+    (cons
+      *geocad-new-group-label*
+      (geocad-build-prefix-display-list prefix_groups)
+    )
   )
 
   ;; Lista do aktualizacji istniejacych grup.
-  (setq prefix_list
-    (cons "--- WSZYSTKIE W RYSUNKU ---" prefix_groups)
+  (setq update_prefixes
+    (cons *geocad-all-groups-label* prefix_groups)
   )
 
-  (setq dcl-file (vl-filename-mktemp "geosetup.dcl") dcl-fn (open dcl-file "w")) 
-  (write-line "GeoSetup : dialog { label = \"Ustawienia Globalne Pikiet (Mozg)\";" dcl-fn) 
-  (write-line "  : boxed_column { label = \"Parametry wizualne (Ogolne)\";" dcl-fn) 
-  (write-line "    : popup_list { key = \"styl_rys\"; label = \"Styl na mapie:\"; list = \"Inteligentny Blok\\nZwykly Punkt + Tekst\"; }" dcl-fn) 
-  (write-line "    : popup_list { key = \"display_mode\"; label = \"Widocznosc:\"; list = \"Oba (Nr + H)\\nTylko Numer\\nTylko Rzedna (H)\\nNic (Sam symbol)\"; }" dcl-fn) 
-  (write-line "    : edit_box { key = \"txt_h\"; label = \"Wysokosc tekstu:\"; edit_width = 8; }" dcl-fn) 
-  (write-line "    : edit_box { key = \"z_prec\"; label = \"Miejsca po przecinku (Z):\"; edit_width = 8; }" dcl-fn) 
-  (write-line "    : popup_list { key = \"prefix_select\"; label = \"Istniejaca grupa warstw:\"; }" dcl-fn)
-  (write-line "    : edit_box { key = \"prefix\"; label = \"Przedrostek WARSTWY (np. POMIAR):\"; edit_width = 20; }" dcl-fn) 
-  (write-line "    : edit_box { key = \"pikt_pref\"; label = \"Przedrostek NUMERU (np. woda_):\"; edit_width = 20; }" dcl-fn) 
+  (setq update_display
+    (cons
+      *geocad-all-groups-label*
+      (geocad-build-prefix-display-list prefix_groups)
+    )
+  )
+
+  ;; ------------------------------------------------------
+  ;; DCL
+  ;; ------------------------------------------------------
+  (setq dcl-file (vl-filename-mktemp "geosetup.dcl"))
+  (setq dcl-fn (open dcl-file "w"))
+
+  (write-line "GeoSetup : dialog { label = \"GEO_SETUP - Grupa robocza GeoprofiCAD\";" dcl-fn)
+
+  (write-line "  : boxed_column { label = \"Aktywna grupa robocza\";" dcl-fn)
+  (write-line "    : popup_list { key = \"prefix_select\"; label = \"Wybierz grupe robocza:\"; width = 45; }" dcl-fn)
+  (write-line "    : edit_box { key = \"prefix\"; label = \"Prefix grupy (np. DROGI):\"; edit_width = 24; }" dcl-fn)
+  (write-line "  }" dcl-fn)
+
+  (write-line "  : boxed_column { label = \"Parametry pikiet w tej grupie\";" dcl-fn)
+  (write-line "    : popup_list { key = \"styl_rys\"; label = \"Styl na mapie:\"; list = \"Inteligentny Blok\\nZwykly Punkt + Tekst\"; }" dcl-fn)
+  (write-line "    : popup_list { key = \"display_mode\"; label = \"Widocznosc:\"; list = \"Oba (Nr + H)\\nTylko Numer\\nTylko Rzedna (H)\\nNic (Sam symbol)\"; }" dcl-fn)
+  (write-line "    : edit_box { key = \"txt_h\"; label = \"Wysokosc tekstu:\"; edit_width = 8; }" dcl-fn)
+  (write-line "    : edit_box { key = \"z_prec\"; label = \"Miejsca po przecinku (Z):\"; edit_width = 8; }" dcl-fn)
+  (write-line "    : edit_box { key = \"pikt_pref\"; label = \"Prefix numeru pikiety (np. dr_):\"; edit_width = 20; }" dcl-fn)
   (write-line "    : edit_box { key = \"z_tags\"; label = \"Tagi rzednych (np. H, Z, WYS):\"; edit_width = 20; }" dcl-fn)
-  (write-line "    : popup_list { key = \"kolor\"; label = \"Kolor podstawowy:\"; list = \"1 - Czerwony\\n2 - Zolty\\n3 - Zielony\\n4 - Cyjan\\n5 - Niebieski\\n6 - Magenta\\n7 - Czarny/Bialy\"; }" dcl-fn) 
-  (write-line "  }" dcl-fn) 
-   
-  (write-line "  : boxed_column { label = \"Zarzadzanie istniejacymi blokami\";" dcl-fn) 
-  (write-line "    : popup_list { key = \"exist_layers\"; label = \"Wybierz grupe do zmiany:\"; }" dcl-fn) 
-  (write-line "    : button { key = \"btn_update\"; label = \"Aktualizuj wybrana grupe powyzszymi parametrami\"; }" dcl-fn) 
-  (write-line "  }" dcl-fn) 
-  (write-line "  ok_cancel;" dcl-fn) 
-  (write-line "}" dcl-fn) 
-  (close dcl-fn) 
+  (write-line "    : popup_list { key = \"kolor\"; label = \"Kolor podstawowy:\"; list = \"1 - Czerwony\\n2 - Zolty\\n3 - Zielony\\n4 - Cyjan\\n5 - Niebieski\\n6 - Magenta\\n7 - Czarny/Bialy\"; }" dcl-fn)
+  (write-line "  }" dcl-fn)
 
-  (setq dcl-id (load_dialog dcl-file)) 
-  (if (not (new_dialog "GeoSetup" dcl-id)) (progn (alert "Blad ladowania okna DCL.") (exit))) 
+  (write-line "  : boxed_column { label = \"Zarzadzanie istniejacymi blokami\";" dcl-fn)
+  (write-line "    : popup_list { key = \"exist_layers\"; label = \"Wybierz grupe do zmiany:\"; width = 45; }" dcl-fn)
+  (write-line "    : button { key = \"btn_update\"; label = \"Aktualizuj wybrana grupe powyzszymi parametrami\"; }" dcl-fn)
+  (write-line "  }" dcl-fn)
 
+  (write-line "  ok_cancel;" dcl-fn)
+  (write-line "}" dcl-fn)
+
+  (close dcl-fn)
+
+  (setq dcl-id (load_dialog dcl-file))
+
+  (if
+    (not (new_dialog "GeoSetup" dcl-id))
+    (progn
+      (alert "Blad ladowania okna DCL.")
+      (exit)
+    )
+  )
+
+  ;; ------------------------------------------------------
+  ;; Wypelnienie list.
+  ;; ------------------------------------------------------
   (start_list "prefix_select")
-  (mapcar 'add_list prefix_select_list)
+  (mapcar 'add_list prefix_select_display)
   (end_list)
 
   (start_list "exist_layers")
-  (mapcar 'add_list prefix_list)
+  (mapcar 'add_list update_display)
   (end_list)
 
+  ;; ------------------------------------------------------
+  ;; Wypelnienie pol.
+  ;; ------------------------------------------------------
   (set_tile "txt_h" txt-h)
   (set_tile "z_prec" z-prec)
   (set_tile "prefix" prefix)
   (set_tile "pikt_pref" pikt_pref)
   (set_tile "z_tags" z_tags)
 
-  ;; Ustaw popup wyboru grupy na aktualny Prefix.
-  ;; Jezeli Prefix nie istnieje na liscie, zostaje pozycja 0.
-  (setq prefix_select_idx 0)
+  (setq prefix_select_idx
+    (geocad-index-of-string prefix prefix_select_prefixes)
+  )
 
-  (if (member prefix prefix_select_list)
-    (progn
-      (while
-        (and
-          (< prefix_select_idx (length prefix_select_list))
-          (/= (nth prefix_select_idx prefix_select_list) prefix)
-        )
-        (setq prefix_select_idx (1+ prefix_select_idx))
-      )
-    )
+  (if (not prefix_select_idx)
+    (setq prefix_select_idx 0)
   )
 
   (set_tile "prefix_select" (itoa prefix_select_idx))
 
   (setq col-idx (atoi kolor))
-  (if (and (>= col-idx 1) (<= col-idx 7))
+
+  (if
+    (and
+      (>= col-idx 1)
+      (<= col-idx 7)
+    )
     (set_tile "kolor" (itoa (1- col-idx)))
     (set_tile "kolor" "2")
   )
 
-  (if (= styl "Tekst")
-    (set_tile "styl_rys" "1")
-    (set_tile "styl_rys" "0")
-  )
+  (set_tile "styl_rys" (geocad-popup-styl-index styl))
+  (set_tile "display_mode" (geocad-popup-display-index display))
 
-  (cond
-    ((= display "Oba") (set_tile "display_mode" "0"))
-    ((= display "Numer") (set_tile "display_mode" "1"))
-    ((= display "Rzedna") (set_tile "display_mode" "2"))
-    ((= display "Brak") (set_tile "display_mode" "3"))
-  )
+  ;; ------------------------------------------------------
+  ;; Akcje DCL.
+  ;; ------------------------------------------------------
 
-  ;; Wybor z listy tylko uzupelnia pole Prefix.
-  ;; Reczne wpisywanie nowej grupy nadal zostaje mozliwe.
+  ;; Wybor grupy:
+  ;; - popup pokazuje opis z liczba obiektow,
+  ;; - ale wewnetrznie uzywamy czystego prefixu z prefix_select_prefixes.
   (action_tile
     "prefix_select"
-    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (set_tile \"prefix\" (nth prefix_select_idx prefix_select_list)))"
+    "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (geocad-setup-apply-group-to-dialog (nth prefix_select_idx prefix_select_prefixes)))"
   )
 
-  (action_tile "btn_update" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\") target_idx (atoi (get_tile \"exist_layers\"))) (done_dialog 2)") 
-  (action_tile "accept" "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)") 
-  (action_tile "cancel" "(done_dialog 0)") 
+  (action_tile
+    "btn_update"
+    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\") target_idx (atoi (get_tile \"exist_layers\"))) (done_dialog 2)"
+  )
 
-  (setq status (start_dialog)) (unload_dialog dcl-id) (vl-file-delete dcl-file) 
+  (action_tile
+    "accept"
+    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)"
+  )
 
-  (if (or (= status 1) (= status 2)) 
-    (progn 
-      (setq styl (if (= styl-idx "1") "Tekst" "Blok")) 
-      (cond ((= disp-idx "0") (setq display "Oba")) ((= disp-idx "1") (setq display "Numer")) ((= disp-idx "2") (setq display "Rzedna")) ((= disp-idx "3") (setq display "Brak"))) 
-       
-      (setq prefix (geocad-trim-string prefix))
+  (action_tile "cancel" "(done_dialog 0)")
+
+  (setq status (start_dialog))
+  (unload_dialog dcl-id)
+  (vl-file-delete dcl-file)
+
+  ;; ------------------------------------------------------
+  ;; Zapis po OK albo aktualizacji.
+  ;; ------------------------------------------------------
+  (if
+    (or
+      (= status 1)
+      (= status 2)
+    )
+    (progn
+      (setq styl
+        (if (= styl-idx "1")
+          "Tekst"
+          "Blok"
+        )
+      )
+
+      (setq display
+        (geocad-display-from-popup-index disp-idx)
+      )
+
+      (setq prefix (geocad-normalize-layer-prefix prefix))
       (setq pikt_pref (geocad-trim-string pikt_pref))
+      (setq z_tags (geocad-trim-string z_tags))
 
       (if (= prefix "")
         (setq prefix "POMIAR")
       )
 
-      (vl-registry-write *geocad-registry-path* "Styl" styl)
-      (vl-registry-write *geocad-registry-path* "Display" display)
-      (vl-registry-write *geocad-registry-path* "TxtH" txt-h)
-      (vl-registry-write *geocad-registry-path* "Prec" z-prec)
-      (vl-registry-write *geocad-registry-path* "Prefix" prefix)
-      (vl-registry-write *geocad-registry-path* "PiktPrefix" pikt_pref)
-      (vl-registry-write *geocad-registry-path* "ZTags" z_tags)
-      (vl-registry-write *geocad-registry-path* "Color" kolor)
-       
-      (if (= status 1) (princ "\n[OK] Zapisano standard dla nowych pikiet.")) 
-       
-      (if (= status 2) 
-        (progn 
-          (setq target_prefix (nth target_idx prefix_list)) 
-          (geocad-update-existing doc target_prefix kolor txt-h z-prec display) 
-        ) 
-      ) 
-    ) 
-    (princ "\n[Anulowano]") 
-  ) 
-  (princ) 
+      ;; Zapis aktywnych ustawien:
+      ;; - do DWG,
+      ;; - do rejestru jako fallback globalny.
+      (geocad-set-cfg "Styl" styl)
+      (geocad-set-cfg "Display" display)
+      (geocad-set-cfg "TxtH" txt-h)
+      (geocad-set-cfg "Prec" z-prec)
+      (geocad-set-cfg "Prefix" prefix)
+      (geocad-set-cfg "PiktPrefix" pikt_pref)
+      (geocad-set-cfg "ZTags" z_tags)
+      (geocad-set-cfg "Color" kolor)
+
+      ;; Zapis pamieci grupy roboczej w tym DWG.
+      (geocad-save-group-settings
+        prefix
+        kolor
+        pikt_pref
+        styl
+        display
+        txt-h
+        z-prec
+        z_tags
+      )
+
+      (if (= status 1)
+        (princ
+          (strcat
+            "\n[OK] Zapisano grupe robocza: "
+            prefix
+            ". Nowe pikiety beda tworzone na warstwach tej grupy."
+          )
+        )
+      )
+
+      (if (= status 2)
+        (progn
+          (setq target_prefix (nth target_idx update_prefixes))
+
+          ;; Jezeli aktualizujemy konkretna grupe, zapisujemy te parametry
+          ;; rowniez jako jej pamiec w DWG.
+          (if (/= target_prefix *geocad-all-groups-label*)
+            (geocad-save-group-settings
+              target_prefix
+              kolor
+              pikt_pref
+              styl
+              display
+              txt-h
+              z-prec
+              z_tags
+            )
+          )
+
+          (geocad-update-existing
+            doc
+            target_prefix
+            kolor
+            txt-h
+            z-prec
+            display
+          )
+        )
+      )
+    )
+    (princ "\n[Anulowano]")
+  )
+
+  (princ)
 )
 
-(princ "\nZaladowano biblioteke: gp_Core.lsp. Wpisz GEO_SETUP aby skonfigurowac.")  
+(princ "\nZaladowano biblioteke: gp_Core.lsp. Wpisz GEO_SETUP aby skonfigurowac.")
 (princ)
