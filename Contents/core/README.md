@@ -15,8 +15,9 @@ Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` p
 - `gp_Workgroups.lsp` — grupy robocze, skaner warstw, pamiec grup i inicjalizacja ustawien DWG.
 - `gp_TextRadar.lsp` — wspolny radar tekstow: bounding box, klasyfikacja ID/Z i parowanie tekstow z punktami bez `ssget` w petli.
 - `gp_PikietaFactory.lsp` — tworzenie bloku, kontekst wstawiania i batchowe wstawianie pikiet.
-- `gp_PikietaStyle.lsp` — bazowe konwersje Blok/Tekst i aktualizacja istniejacych pikiet.
-- `gp_PikietaStyleOptimized.lsp` — optymalizowane nadpisania konwersji tekstowych pikiet, ladowane po `gp_PikietaStyle.lsp`.
+- `gp_PikietaStyle.lsp` — bazowe funkcje stylu pikiet.
+- `gp_PikietaData.lsp` — model posredni konwersji: DWG -> `PikietaData[]` -> zapis wariantu docelowego.
+- `gp_PikietaStyleOptimized.lsp` — publiczne nadpisania konwersji i auto-apply, przekierowane na `gp_PikietaData.lsp`.
 - `gp_ExportRadarCompat.lsp` — kompatybilne wrappery dla starego radaru w `gp_Export.lsp`, przekierowane do `gp_TextRadar.lsp`.
 
 ## Zasady
@@ -24,4 +25,4 @@ Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` p
 - Logika wspolna dla importu, eksportu i wstawiania powinna trafiac do `core/`.
 - Logika okien i `GEO_SETUP` powinna trafiac do `Contents/ui/`.
 - `PackageContents.xml` jest zrodlem prawdy dla kolejnosci ladowania.
-- Optymalizacje robimy dopiero po zachowaniu starego publicznego API.
+- Konwersje stylu pikiet powinny isc przez model posredni `PikietaData`, a nie mieszac odczytu, zapisu i modyfikacji obiektow w jednej petli.
