@@ -1552,7 +1552,7 @@
         (geocad-group-cfg-read
           pref
           "PiktPrefix"
-          (get_tile "pikt_pref")
+          ""
         )
       )
 
@@ -1972,7 +1972,7 @@
   ;; Dodatkowo lista prefixow numeracji odswieza sie dla wpisanej grupy.
   (action_tile
     "prefix"
-    "(setq prefix_select_idx 0) (set_tile \"prefix_select\" \"0\") (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") (get_tile \"pikt_pref\"))) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))"
+    "(setq prefix_select_idx 0) (set_tile \"prefix_select\" \"0\") (set_tile \"pikt_pref\" \"\") (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-list (get_tile \"prefix\") \"\")) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle))"
   )
 
   ;; Wybor prefixu numeracji:
