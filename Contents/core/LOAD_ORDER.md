@@ -15,15 +15,16 @@
 11. `Contents/core/gp_PikietaStyle.lsp`
 12. `Contents/core/gp_PikietaData.lsp`
 13. `Contents/core/gp_PikietaStyleOptimized.lsp`
-14. `Contents/ui/gp_SetupDialog.lsp`
-15. `Contents/ui/gp_SetupAutosave.lsp`
-16. `Contents/ui/gp_SetupPrefix.lsp`
-17. `Contents/ui/gp_SetupGroup.lsp`
-18. `Contents/ui/gp_SetupMain.lsp`
-19. `Contents/gp_Import.lsp`
-20. `Contents/gp_Export.lsp`
-21. `Contents/core/gp_ExportRadarCompat.lsp`
-22. pozostale moduly funkcjonalne: wstawianie, niwelacje, siatka, usuwanie.
+14. `Contents/core/gp_PikietaTextFast.lsp`
+15. `Contents/ui/gp_SetupDialog.lsp`
+16. `Contents/ui/gp_SetupAutosave.lsp`
+17. `Contents/ui/gp_SetupPrefix.lsp`
+18. `Contents/ui/gp_SetupGroup.lsp`
+19. `Contents/ui/gp_SetupMain.lsp`
+20. `Contents/gp_Import.lsp`
+21. `Contents/gp_Export.lsp`
+22. `Contents/core/gp_ExportRadarCompat.lsp`
+23. pozostale moduly funkcjonalne: wstawianie, niwelacje, siatka, usuwanie.
 
 `Contents/core/gp_CoreLegacy.lsp` nie jest juz ladowany z manifestu.
 Zostaje w repo jako kopia awaryjna do porownania albo szybkiego rollbacku.
@@ -31,4 +32,5 @@ Zostaje w repo jako kopia awaryjna do porownania albo szybkiego rollbacku.
 `gp_PikietaSchema.lsp` musi byc ladowany przed factory/style/data, bo definiuje nazwe bloku i tagi atrybutow.
 `gp_PikietaData.lsp` musi byc ladowany po `gp_PikietaStyle.lsp`, bo korzysta z istniejacych funkcji tworzenia wariantow pikiet.
 `gp_PikietaStyleOptimized.lsp` musi byc ladowany po `gp_PikietaData.lsp`, bo publiczne operacje stylu kieruje na model posredni `PikietaData` i runtime schematu.
+`gp_PikietaTextFast.lsp` musi byc ladowany po `gp_PikietaStyleOptimized.lsp`, bo nadpisuje tworzenie tekstowego wariantu pikiety szybka sciezka entmakex.
 `gp_ExportRadarCompat.lsp` musi byc ladowany po `gp_Export.lsp`, bo przekierowuje stare helpery eksportu na wspolny `gp_TextRadar.lsp`.
