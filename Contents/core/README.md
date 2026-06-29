@@ -13,11 +13,12 @@ Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` p
 - `gp_Numbering.lsp` — prefixy numeracji, liczniki i `GP:PobierzNastepnyNumer`.
 - `gp_CadObjects.lsp` — niskopoziomowe helpery AutoCAD/VLAX, obiekty CAD, punkty i teksty.
 - `gp_Workgroups.lsp` — grupy robocze, skaner warstw, pamiec grup i inicjalizacja ustawien DWG.
+- `gp_PikietaSchema.lsp` — centralny schemat pikiety: nazwa bloku, tag numeru, tagi rzednej i wartosci domyslne.
 - `gp_TextRadar.lsp` — wspolny radar tekstow: bounding box, klasyfikacja ID/Z i parowanie tekstow z punktami bez `ssget` w petli.
-- `gp_PikietaFactory.lsp` — tworzenie bloku, kontekst wstawiania i batchowe wstawianie pikiet.
+- `gp_PikietaFactory.lsp` — bazowe tworzenie bloku, kontekst wstawiania i batchowe wstawianie pikiet.
 - `gp_PikietaStyle.lsp` — bazowe funkcje stylu pikiet.
 - `gp_PikietaData.lsp` — model posredni konwersji: DWG -> `PikietaData[]` -> zapis wariantu docelowego.
-- `gp_PikietaStyleOptimized.lsp` — publiczne nadpisania konwersji i auto-apply, przekierowane na `gp_PikietaData.lsp`.
+- `gp_PikietaStyleOptimized.lsp` — runtime schema + publiczne nadpisania konwersji i auto-apply, przekierowane na `gp_PikietaData.lsp`.
 - `gp_ExportRadarCompat.lsp` — kompatybilne wrappery dla starego radaru w `gp_Export.lsp`, przekierowane do `gp_TextRadar.lsp`.
 
 ## Zasady
@@ -25,4 +26,5 @@ Ten folder zawiera wspolna logike GeoprofiCAD ladowana z `PackageContents.xml` p
 - Logika wspolna dla importu, eksportu i wstawiania powinna trafiac do `core/`.
 - Logika okien i `GEO_SETUP` powinna trafiac do `Contents/ui/`.
 - `PackageContents.xml` jest zrodlem prawdy dla kolejnosci ladowania.
+- Schemat pikiety powinien byc czytany z `gp_PikietaSchema.lsp`; nie wpisujemy recznie `Pikieta_Geo`, `NR`, `H`, `Z`, `RZEDNA` w nowych miejscach.
 - Konwersje stylu pikiet powinny isc przez model posredni `PikietaData`, a nie mieszac odczytu, zapisu i modyfikacji obiektow w jednej petli.
