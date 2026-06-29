@@ -15,16 +15,4 @@
 (setq *geocad-core-split-stage* "shadow-split")
 (setq *geocad-core-runtime-loaded* T)
 
-(defun geocad-core-split-status ()
-  (list
-    (cons "runtime" (if (boundp '*geocad-core-runtime-loaded*) *geocad-core-runtime-loaded* nil))
-    (cons "project-memory" (if (boundp '*geocad-module-projectmemory-loaded*) *geocad-module-projectmemory-loaded* nil))
-    (cons "numbering" (if (boundp '*geocad-module-numbering-loaded*) *geocad-module-numbering-loaded* nil))
-    (cons "cad-objects" (if (boundp '*geocad-module-cadobjects-loaded*) *geocad-module-cadobjects-loaded* nil))
-    (cons "pikieta-factory" (if (boundp '*geocad-module-pikietafactory-loaded*) *geocad-module-pikietafactory-loaded* nil))
-    (cons "pikieta-style" (if (boundp '*geocad-module-pikietastyle-loaded*) *geocad-module-pikietastyle-loaded* nil))
-    (cons "setup-dialog" (if (boundp '*geocad-module-setupdialog-loaded*) *geocad-module-setupdialog-loaded* nil))
-  )
-)
-
 (princ)
