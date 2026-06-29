@@ -1486,6 +1486,27 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Filtrowanie rekordow po wielu warstwach ---
+(defun geocad-multi-filter-records-by-layers (records selected-layers / filtered rec-layer)
+  (setq filtered '())
+
+  (foreach rec records
+    (setq rec-layer (geocad-multi-record-layer rec))
+
+    (if (member (strcase rec-layer) selected-layers)
+      (setq filtered
+        (cons
+          rec
+          filtered
+        )
+      )
+    )
+  )
+
+  (reverse filtered)
+)
+
+
 ;; --- FUNKCJA POMOCNICZA: Statystyki rekordow dla jednej warstwy ---
 (defun geocad-multi-layer-record-stats
   (
@@ -1558,6 +1579,270 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Etykieta warstwy do okna wyboru ---
+(defun geocad-multi-layer-choice-label
+  (
+    records layer
+    /
+    stats cnt min-L max-L min-Z max-Z
+  )
+
+  (setq stats (geocad-multi-layer-record-stats records layer))
+  (setq cnt (nth 0 stats))
+  (setq min-L (nth 1 stats))
+  (setq max-L (nth 2 stats))
+  (setq min-Z (nth 3 stats))
+  (setq max-Z (nth 4 stats))
+
+  (strcat
+    layer
+    " | pkt: "
+    (itoa cnt)
+    " | pikietaz: "
+    (geocad-multi-format-range min-L max-L 3)
+    " | Z: "
+    (geocad-multi-format-range min-Z max-Z 3)
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Lista indeksow do list_box DCL ---
+(defun geocad-multi-listbox-index-string (cnt / idx res)
+  (setq idx 0)
+  (setq res "")
+
+  (while (< idx cnt)
+    (setq res
+      (strcat
+        res
+        (if (= res "") "" " ")
+        (itoa idx)
+      )
+    )
+
+    (setq idx (1+ idx))
+  )
+
+  res
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Parsowanie indeksow z list_box DCL ---
+(defun geocad-multi-parse-listbox-indexes (txt / idx len ch token indexes)
+  (setq idx 1)
+  (setq len (strlen txt))
+  (setq token "")
+  (setq indexes '())
+
+  (while (<= idx len)
+    (setq ch (substr txt idx 1))
+
+    (if (= ch " ")
+      (progn
+        (if (/= token "")
+          (progn
+            (setq indexes (cons (atoi token) indexes))
+            (setq token "")
+          )
+        )
+      )
+
+      (setq token (strcat token ch))
+    )
+
+    (setq idx (1+ idx))
+  )
+
+  (if (/= token "")
+    (setq indexes (cons (atoi token) indexes))
+  )
+
+  (reverse indexes)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Parsowanie listy numerow z tekstu ---
+(defun geocad-multi-parse-number-list (txt / idx len ch token nums)
+  (setq idx 1)
+  (setq len (strlen txt))
+  (setq token "")
+  (setq nums '())
+
+  (while (<= idx len)
+    (setq ch (substr txt idx 1))
+
+    (if (wcmatch ch "#")
+      (setq token (strcat token ch))
+
+      (progn
+        (if (/= token "")
+          (progn
+            (setq nums (cons (atoi token) nums))
+            (setq token "")
+          )
+        )
+      )
+    )
+
+    (setq idx (1+ idx))
+  )
+
+  (if (/= token "")
+    (setq nums (cons (atoi token) nums))
+  )
+
+  (reverse nums)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Opis listy wybranych warstw ---
+(defun geocad-multi-format-layer-selection-label (selected-layers all-layers / label layer)
+  (cond
+    ((not selected-layers)
+      "Anulowano wybor"
+    )
+
+    ((= (length selected-layers) (length all-layers))
+      "Wszystkie warstwy"
+    )
+
+    (T
+      (progn
+        (setq label "")
+
+        (foreach layer selected-layers
+          (setq label
+            (strcat
+              label
+              (if (= label "") "" ", ")
+              layer
+            )
+          )
+        )
+
+        label
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Wybor wielu warstw w oknie DCL ---
+(defun geocad-multi-select-layers-dialog
+  (
+    records layers source-label
+    /
+    dcl-file dcl-fn dcl-id status
+    idx layer selected-indexes selected-layers
+  )
+
+  ;; Zwraca:
+  ;; - liste nazw warstw,
+  ;; - ("__CANCEL__"), jezeli anulowano,
+  ;; - ("__DCL_FAILED__"), jezeli okna nie udalo sie wczytac.
+  (setq selected-layers '("__DCL_FAILED__"))
+  (setq dcl-file (vl-filename-mktemp "geocad_multi_layers.dcl"))
+  (setq dcl-fn (open dcl-file "w"))
+
+  (if dcl-fn
+    (progn
+      (write-line "GeoMultiLayerSelect : dialog { label = \"NIWELACJA_MULTI - wybor warstw\";" dcl-fn)
+      (write-line "  : boxed_column { label = \"Wykryte warstwy punktow bazowych\";" dcl-fn)
+      (write-line "    : text { label = \"Zaznacz jedna lub kilka warstw do obliczen.\"; }" dcl-fn)
+      (write-line "    : list_box { key = \"layers\"; width = 95; height = 14; multiple_select = true; }" dcl-fn)
+      (write-line "  }" dcl-fn)
+      (write-line "  : row { alignment = centered;" dcl-fn)
+      (write-line "    : button { key = \"all\"; label = \"Zaznacz wszystkie\"; }" dcl-fn)
+      (write-line "    : button { key = \"none\"; label = \"Odznacz wszystkie\"; }" dcl-fn)
+      (write-line "  }" dcl-fn)
+      (write-line "  : boxed_column { label = \"Status\";" dcl-fn)
+      (write-line "    : text { key = \"status\"; label = \"Domyslnie zaznaczono wszystkie warstwy.\"; }" dcl-fn)
+      (write-line "  }" dcl-fn)
+      (write-line "  ok_cancel;" dcl-fn)
+      (write-line "}" dcl-fn)
+      (close dcl-fn)
+
+      (setq dcl-id (load_dialog dcl-file))
+
+      (if
+        (and
+          dcl-id
+          (new_dialog "GeoMultiLayerSelect" dcl-id)
+        )
+        (progn
+          (start_list "layers")
+          (foreach layer layers
+            (add_list (geocad-multi-layer-choice-label records layer))
+          )
+          (end_list)
+
+          ;; Domyslnie bierzemy wszystkie warstwy, zeby zachowac szybki automat.
+          (set_tile "layers" (geocad-multi-listbox-index-string (length layers)))
+          (set_tile "status" (strcat source-label ": wybierz warstwy i kliknij OK."))
+
+          (action_tile
+            "all"
+            "(set_tile \"layers\" (geocad-multi-listbox-index-string (length layers))) (set_tile \"status\" \"Zaznaczono wszystkie warstwy.\")"
+          )
+
+          (action_tile
+            "none"
+            "(set_tile \"layers\" \"\") (set_tile \"status\" \"Odznaczono wszystkie warstwy - wybierz przynajmniej jedna.\")"
+          )
+
+          (action_tile
+            "accept"
+            "(if (= (get_tile \"layers\") \"\") (set_tile \"status\" \"BLAD - wybierz przynajmniej jedna warstwe.\") (progn (setq selected-indexes (geocad-multi-parse-listbox-indexes (get_tile \"layers\"))) (done_dialog 1)))"
+          )
+
+          (action_tile "cancel" "(done_dialog 0)")
+          (setq status (start_dialog))
+        )
+
+        (setq status -1)
+      )
+
+      (if dcl-id
+        (unload_dialog dcl-id)
+      )
+
+      (vl-file-delete dcl-file)
+
+      (cond
+        ((= status 1)
+          (progn
+            (setq selected-layers '())
+
+            (foreach idx selected-indexes
+              (setq layer (nth idx layers))
+
+              (if layer
+                (setq selected-layers
+                  (append
+                    selected-layers
+                    (list layer)
+                  )
+                )
+              )
+            )
+          )
+        )
+
+        ((= status 0)
+          (setq selected-layers '("__CANCEL__"))
+        )
+
+        ((= status -1)
+          (setq selected-layers '("__DCL_FAILED__"))
+        )
+      )
+    )
+  )
+
+  selected-layers
+)
+
+
 ;; --- FUNKCJA POMOCNICZA: Wypis jednej pozycji wyboru warstwy ---
 (defun geocad-multi-print-layer-choice-line
   (
@@ -1590,19 +1875,20 @@
 )
 
 
-;; --- FUNKCJA POMOCNICZA: Wybor warstwy z rekordow ---
+;; --- FUNKCJA POMOCNICZA: Wybor warstw z rekordow ---
 (defun geocad-multi-select-records-by-layer
   (
     records source-label
     /
     layers total
-    idx layer count
-    choice selected-records selected-label
+    idx layer
+    choice choices choice-valid num
+    selected-records selected-label selected-layers selected-layer-keys dialog-result selection-cancelled
     prompt
   )
 
   ;; Jezeli znaleziono pikiety na kilku warstwach,
-  ;; uzytkownik moze wybrac konkretna warstwe albo wszystkie.
+  ;; uzytkownik moze wybrac jedna, kilka albo wszystkie warstwy.
   ;;
   ;; Zwraca:
   ;; (wybrane-rekordy opis-wyboru)
@@ -1648,85 +1934,154 @@
     )
 
     (T
-      (princ
-        (strcat
-          "\n"
-          source-label
-          ": wykryto punkty bazowe na kilku warstwach:"
+      ;; Najpierw probujemy wygodne okno dialogowe z wielokrotnym wyborem.
+      (setq dialog-result
+        (geocad-multi-select-layers-dialog records layers source-label)
+      )
+      (setq selection-cancelled nil)
+
+      (cond
+        ((member "__CANCEL__" dialog-result)
+          (setq selected-layers '())
+          (setq selection-cancelled T)
+        )
+
+        ((member "__DCL_FAILED__" dialog-result)
+          (setq selected-layers nil)
+        )
+
+        (T
+          (setq selected-layers dialog-result)
         )
       )
 
-      (setq idx 1)
-
-      (foreach layer layers
-        (geocad-multi-print-layer-choice-line idx records layer)
-        (setq idx (1+ idx))
-      )
-
-      (princ
-        (strcat
-          "\n\n[0] Wszystkie warstwy"
-          "\n    punkty: "
-          (itoa total)
+      ;; Fallback konsolowy tylko wtedy, gdy DCL nie jest dostepny.
+      (if
+        (and
+          (not selected-layers)
+          (not selection-cancelled)
         )
-      )
-
-      (setq prompt
-        (strcat
-          "\n\nWybierz warstwe punktow bazowych [1-"
-          (itoa (length layers))
-          "] albo 0 = Wszystkie: "
-        )
-      )
-
-      (setq choice nil)
-
-      (while (not choice)
-        (setq choice (getint prompt))
-
-        (if (not choice)
-          (setq choice 0)
-        )
-
-        (if
-          (not
-            (and
-              (numberp choice)
-              (>= choice 0)
-              (<= choice (length layers))
+        (progn
+          (princ
+            (strcat
+              "\n"
+              source-label
+              ": wykryto punkty bazowe na kilku warstwach:"
             )
           )
-          (progn
-            (princ
-              (strcat
-                "\nNiepoprawny wybor. Wpisz liczbe od 0 do "
-                (itoa (length layers))
-                "."
+
+          (setq idx 1)
+
+          (foreach layer layers
+            (geocad-multi-print-layer-choice-line idx records layer)
+            (setq idx (1+ idx))
+          )
+
+          (princ
+            (strcat
+              "\n\n[0] Wszystkie warstwy"
+              "\n    punkty: "
+              (itoa total)
+            )
+          )
+
+          (setq prompt
+            (strcat
+              "\n\nWybierz warstwy punktow bazowych, np. 1,3 albo 0 = Wszystkie [0-"
+              (itoa (length layers))
+              "]: "
+            )
+          )
+
+          (setq choices nil)
+
+          (while (not choices)
+            (setq choice (getstring T prompt))
+
+            (if (= choice "")
+              (setq choice "0")
+            )
+
+            (setq choices (geocad-multi-parse-number-list choice))
+
+            (if (not choices)
+              (setq choices '(0))
+            )
+
+            (setq choice-valid T)
+
+            (foreach num choices
+              (if
+                (not
+                  (and
+                    (numberp num)
+                    (>= num 0)
+                    (<= num (length layers))
+                  )
+                )
+                (setq choice-valid nil)
               )
             )
-            (setq choice nil)
+
+            (if (not choice-valid)
+              (progn
+                (princ
+                  (strcat
+                    "\nNiepoprawny wybor. Wpisz numery warstw od 1 do "
+                    (itoa (length layers))
+                    " rozdzielone przecinkami albo 0 = Wszystkie."
+                  )
+                )
+                (setq choices nil)
+              )
+            )
+          )
+
+          (if (member 0 choices)
+            (setq selected-layers layers)
+
+            (progn
+              (setq selected-layers '())
+
+              (foreach num choices
+                (setq layer (nth (1- num) layers))
+
+                (if
+                  (and
+                    layer
+                    (not (member layer selected-layers))
+                  )
+                  (setq selected-layers
+                    (append
+                      selected-layers
+                      (list layer)
+                    )
+                  )
+                )
+              )
+            )
           )
         )
       )
 
-      (if (= choice 0)
-        (progn
-          (setq selected-records records)
-          (setq selected-label "Wszystkie warstwy")
+      (setq selected-layer-keys
+        (mapcar
+          'strcase
+          selected-layers
         )
+      )
 
-        (progn
-          (setq layer (nth (1- choice) layers))
-          (setq selected-records
-            (geocad-multi-filter-records-by-layer records layer)
-          )
-          (setq selected-label layer)
-        )
+      (setq selected-records
+        (geocad-multi-filter-records-by-layers records selected-layer-keys)
+      )
+
+      (setq selected-label
+        (geocad-multi-format-layer-selection-label selected-layers layers)
       )
 
       (princ
         (strcat
-          "\nWybor warstwy: "
+          "\nWybor warstw: "
           selected-label
           " ("
           (itoa (length selected-records))
