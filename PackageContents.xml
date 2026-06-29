@@ -11,7 +11,8 @@
     <Components>
         <RuntimeRequirements OS="Win64" Platform="AutoCAD" SeriesMin="R24.0" SeriesMax="R25.2" />
         <ComponentEntry AppName="Geoprofi_Config" ModuleName="./Contents/gp_Config.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Core" ModuleName="./Contents/gp_Core.lsp" PerDocument="True" /> 
+        <ComponentEntry AppName="Geoprofi_Core" ModuleName="./Contents/gp_Core.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_Core_Runtime" ModuleName="./Contents/core/gp_CoreRuntime.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Import" ModuleName="./Contents/gp_Import.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Export" ModuleName="./Contents/gp_Export.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Wstaw" ModuleName="./Contents/gp_WstawPikiete.lsp" PerDocument="True" /> 
