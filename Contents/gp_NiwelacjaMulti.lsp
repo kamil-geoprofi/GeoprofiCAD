@@ -656,6 +656,60 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Bezpieczny typ obiektu ---
+(defun geocad-multi-safe-object-type (obj / res)
+  (setq res
+    (vl-catch-all-apply
+      'vla-get-ObjectName
+      (list obj)
+    )
+  )
+
+  (if (vl-catch-all-error-p res)
+    nil
+    res
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Numer/nazwa pikiety z bloku ---
+(defun geocad-multi-safe-block-nr (obj / res)
+  (setq res
+    (vl-catch-all-apply
+      'geocad-block-attr-text
+      (list obj *geocad-pikieta-attr-nr*)
+    )
+  )
+
+  (if
+    (or
+      (vl-catch-all-error-p res)
+      (not res)
+      (= res "")
+    )
+    nil
+    res
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Wstepna nazwa pikiety ---
+(defun geocad-multi-initial-point-name (obj / type nr)
+  ;; Dla blokow Pikieta_Geo odczytujemy atrybut NR od razu.
+  ;; Dla stylu tekstowego POINT nazwa jest dociagana na zadanie w oknie statystyk.
+  (setq type (geocad-multi-safe-object-type obj))
+
+  (if (= type "AcDbBlockReference")
+    (progn
+      (setq nr (geocad-multi-safe-block-nr obj))
+      (if nr nr "<bez NR>")
+    )
+
+    nil
+  )
+)
+
+
 ;; --- FUNKCJA POMOCNICZA: Czy obiekt moze byc wezlem bazowym MULTI ---
 (defun geocad-multi-supported-base-object-p
   (
@@ -911,7 +965,7 @@
 ;; --- FUNKCJA POMOCNICZA: Rekord wezla do formatu roboczego ---
 (defun geocad-multi-record-to-node (rec)
   ;; Rekord ma format:
-  ;; (pikietaz rzedna_Z warstwa odleglosc_XY_od_osi)
+  ;; (pikietaz rzedna_Z warstwa odleglosc_XY_od_osi nazwa_pikiety ename punkt_zrodlowy)
   ;;
   ;; Wezel roboczy ma format:
   ;; (pikietaz rzedna_Z odleglosc_XY_od_osi)
@@ -1259,7 +1313,7 @@
     ss crvObj tolerance point-layer
     /
     records omitted
-    i en obj pt node gap layer
+    i en obj pt node gap layer name
   )
 
   ;; tolerance = nil    -> tryb reczny, bez filtrowania po odleglosci od osi.
@@ -1270,7 +1324,7 @@
   ;; - POINT na dowolnej zarzadzanej warstwie *_PIKIETY.
   ;;
   ;; Rekord ma format:
-  ;; (pikietaz rzedna_Z warstwa odleglosc_XY_od_osi)
+  ;; (pikietaz rzedna_Z warstwa odleglosc_XY_od_osi nazwa_pikiety ename punkt_zrodlowy)
   (setq records '())
   (setq omitted 0)
   (setq i 0)
@@ -1315,29 +1369,33 @@
                   (setq gap (caddr node))
 
                   (if
-                    (or
-                      (not tolerance)
-                      (<= gap tolerance)
-                    )
-                    (progn
-                      (setq layer (geocad-multi-get-object-layer obj))
-
-                      (if (not layer)
-                        (setq layer "<BRAK_WARSTWY>")
+                      (or
+                        (not tolerance)
+                        (<= gap tolerance)
                       )
+                      (progn
+                        (setq layer (geocad-multi-get-object-layer obj))
+                        (setq name (geocad-multi-initial-point-name obj))
 
-                      (setq records
-                        (cons
-                          (list
-                            (car node)
-                            (cadr node)
-                            layer
-                            (caddr node)
+                        (if (not layer)
+                          (setq layer "<BRAK_WARSTWY>")
+                        )
+
+                        (setq records
+                          (cons
+                            (list
+                              (car node)
+                              (cadr node)
+                              layer
+                              (caddr node)
+                              name
+                              en
+                              pt
+                            )
+                            records
                           )
-                          records
                         )
                       )
-                    )
 
                     (setq omitted (1+ omitted))
                   )
@@ -1425,6 +1483,41 @@
     (caddr rec)
     "<BRAK_WARSTWY>"
   )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Odleglosc punktu rekordu od osi ---
+(defun geocad-multi-record-gap (rec)
+  (if (and rec (numberp (cadddr rec)))
+    (cadddr rec)
+    0.0
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Nazwa/NR pikiety z rekordu ---
+(defun geocad-multi-record-name (rec)
+  (if
+    (and
+      rec
+      (nth 4 rec)
+      (/= (nth 4 rec) "")
+    )
+    (nth 4 rec)
+    "<bez nazwy>"
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Ename pikiety z rekordu ---
+(defun geocad-multi-record-ename (rec)
+  (if rec (nth 5 rec) nil)
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Punkt XYZ pikiety z rekordu ---
+(defun geocad-multi-record-source-point (rec)
+  (if rec (nth 6 rec) nil)
 )
 
 
@@ -1727,13 +1820,277 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Sortowanie rekordow po odleglosci od osi malejaco ---
+(defun geocad-multi-sort-records-by-gap-desc (records)
+  (vl-sort
+    records
+    '(lambda (a b)
+      (> (geocad-multi-record-gap a) (geocad-multi-record-gap b))
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Teksty NR dla warstwy punktow ---
+(defun geocad-multi-collect-nr-text-items-for-point-layer (point-layer / prefix nr-layer)
+  (setq prefix (geocad-managed-layer-prefix-from-name point-layer))
+
+  (if prefix
+    (progn
+      (setq nr-layer
+        (geocad-layer-name prefix *geocad-layer-type-label-nr*)
+      )
+      (geocad-text-radar-collect-layer nr-layer)
+    )
+
+    '()
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Nazwa pikiety tekstowej z najblizszej etykiety NR ---
+(defun geocad-multi-text-point-name-from-radar
+  (
+    rec nr-items
+    /
+    pt txt-h dX dY tol item txt
+  )
+
+  (setq pt (geocad-multi-record-source-point rec))
+  (setq txt nil)
+
+  (if
+    (and
+      pt
+      nr-items
+    )
+    (progn
+      (setq txt-h (atof (geocad-get-cfg "TxtH" "2.0")))
+      (if (<= txt-h 0.0)
+        (setq txt-h 2.0)
+      )
+
+      ;; Taka sama geometria opisow jak w module PikietaData:
+      ;; NR jest zwykle na przesunieciu (+dX, +dY) od punktu.
+      (setq dX (* txt-h 1.2))
+      (setq dY (* txt-h 0.7))
+      (setq tol (max 1.0 (* txt-h 8.0)))
+
+      (setq item
+        (geocad-text-radar-find-nearest
+          (list (+ (car pt) dX) (+ (cadr pt) dY) (caddr pt))
+          nr-items
+          tol
+          nil
+        )
+      )
+
+      (setq txt (geocad-text-radar-item-text item))
+    )
+  )
+
+  (if
+    (and
+      txt
+      (/= txt "")
+    )
+    txt
+    nil
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Uzupelnienie nazwy pikiety w rekordzie ---
+(defun geocad-multi-resolve-record-name (rec nr-items / name text-name)
+  (setq name (geocad-multi-record-name rec))
+
+  (if (= name "<bez nazwy>")
+    (progn
+      (setq text-name (geocad-multi-text-point-name-from-radar rec nr-items))
+
+      (if text-name
+        (setq name text-name)
+      )
+    )
+  )
+
+  name
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Etykieta rekordu w oknie statystyk ---
+(defun geocad-multi-point-stat-label (rec nr-items / name)
+  (setq name (geocad-multi-resolve-record-name rec nr-items))
+
+  (strcat
+    name
+    " | odl: "
+    (rtos (geocad-multi-record-gap rec) 2 3)
+    " | pikietaz: "
+    (rtos (car rec) 2 3)
+    " | Z: "
+    (rtos (cadr rec) 2 3)
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Pokazanie rekordu pikiety w rysunku ---
+(defun geocad-multi-show-record-in-drawing (rec / en pt acadObj margin p1 p2 ss obj)
+  (setq en (geocad-multi-record-ename rec))
+  (setq pt (geocad-multi-record-source-point rec))
+
+  (if
+    (and
+      en
+      (entget en)
+    )
+    (progn
+      (setq ss (ssadd))
+      (ssadd en ss)
+      (sssetfirst nil ss)
+    )
+  )
+
+  (if
+    (and
+      (not pt)
+      en
+      (entget en)
+    )
+    (progn
+      (setq obj
+        (vl-catch-all-apply
+          'vlax-ename->vla-object
+          (list en)
+        )
+      )
+
+      (if (not (vl-catch-all-error-p obj))
+        (setq pt (geocad-multi-safe-get-pt-from-obj obj))
+      )
+    )
+  )
+
+  (if pt
+    (progn
+      (setq acadObj (vlax-get-acad-object))
+      (setq margin 5.0)
+      (setq p1 (list (- (car pt) margin) (- (cadr pt) margin) 0.0))
+      (setq p2 (list (+ (car pt) margin) (+ (cadr pt) margin) 0.0))
+      (vl-catch-all-apply
+        'vla-ZoomWindow
+        (list acadObj (vlax-3d-point p1) (vlax-3d-point p2))
+      )
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Dialog statystyk punktow na warstwie ---
+(defun geocad-multi-show-layer-stats-dialog
+  (
+    records layer
+    /
+    layer-records sorted-records nr-items
+    dcl-file dcl-fn dcl-id status
+    selected-index selected-record
+  )
+
+  (setq layer-records
+    (geocad-multi-filter-records-by-layer records layer)
+  )
+  (setq sorted-records
+    (geocad-multi-sort-records-by-gap-desc layer-records)
+  )
+  (setq nr-items
+    (geocad-multi-collect-nr-text-items-for-point-layer layer)
+  )
+
+  (setq dcl-file (vl-filename-mktemp "geocad_multi_point_stats.dcl"))
+  (setq dcl-fn (open dcl-file "w"))
+
+  (if dcl-fn
+    (progn
+      (write-line "GeoMultiPointStats : dialog { label = \"NIWELACJA_MULTI - statystyka punktow\";" dcl-fn)
+      (write-line "  : boxed_column { label = \"Punkty na wybranej warstwie\";" dcl-fn)
+      (write-line "    : text { key = \"info\"; label = \" \"; }" dcl-fn)
+      (write-line "    : list_box { key = \"points\"; width = 105; height = 18; }" dcl-fn)
+      (write-line "  }" dcl-fn)
+      (write-line "  : boxed_column { label = \"Sortowanie\";" dcl-fn)
+      (write-line "    : text { label = \"Lista jest posortowana malejaco po odleglosci punktu od osi.\"; }" dcl-fn)
+      (write-line "  }" dcl-fn)
+      (write-line "  : row { alignment = centered;" dcl-fn)
+      (write-line "    : button { key = \"show\"; label = \"Pokaz w rysunku\"; is_default = true; }" dcl-fn)
+      (write-line "    : button { key = \"close\"; label = \"Zamknij\"; is_cancel = true; }" dcl-fn)
+      (write-line "  }" dcl-fn)
+      (write-line "}" dcl-fn)
+      (close dcl-fn)
+
+      (setq dcl-id (load_dialog dcl-file))
+
+      (if
+        (and
+          dcl-id
+          (new_dialog "GeoMultiPointStats" dcl-id)
+        )
+        (progn
+          (set_tile
+            "info"
+            (strcat
+              "Warstwa: "
+              layer
+              " | punktow: "
+              (itoa (length sorted-records))
+            )
+          )
+
+          (start_list "points")
+          (foreach selected-record sorted-records
+            (add_list (geocad-multi-point-stat-label selected-record nr-items))
+          )
+          (end_list)
+
+          (if sorted-records
+            (set_tile "points" "0")
+          )
+
+          (action_tile
+            "show"
+            "(setq selected-index (atoi (get_tile \"points\"))) (setq selected-record (nth selected-index sorted-records)) (done_dialog 1)"
+          )
+
+          (action_tile "close" "(done_dialog 0)")
+          (setq status (start_dialog))
+        )
+      )
+
+      (if dcl-id
+        (unload_dialog dcl-id)
+      )
+
+      (vl-file-delete dcl-file)
+
+      (if
+        (and
+          (= status 1)
+          selected-record
+        )
+        (geocad-multi-show-record-in-drawing selected-record)
+      )
+    )
+  )
+
+  nil
+)
+
+
 ;; --- FUNKCJA POMOCNICZA: Wybor wielu warstw w oknie DCL ---
 (defun geocad-multi-select-layers-dialog
   (
     records layers source-label
     /
     dcl-file dcl-fn dcl-id status
-    idx layer selected-indexes selected-layers
+    idx layer selected-indexes selected-layers stats-index stats-layer
   )
 
   ;; Zwraca:
@@ -1754,6 +2111,7 @@
       (write-line "  : row { alignment = centered;" dcl-fn)
       (write-line "    : button { key = \"all\"; label = \"Zaznacz wszystkie\"; }" dcl-fn)
       (write-line "    : button { key = \"none\"; label = \"Odznacz wszystkie\"; }" dcl-fn)
+      (write-line "    : button { key = \"stats\"; label = \"Statystyka warstwy\"; }" dcl-fn)
       (write-line "  }" dcl-fn)
       (write-line "  : boxed_column { label = \"Status\";" dcl-fn)
       (write-line "    : text { key = \"status\"; label = \"Domyslnie zaznaczono wszystkie warstwy.\"; }" dcl-fn)
@@ -1788,6 +2146,11 @@
           (action_tile
             "none"
             "(set_tile \"layers\" \"\") (set_tile \"status\" \"Odznaczono wszystkie warstwy - wybierz przynajmniej jedna.\")"
+          )
+
+          (action_tile
+            "stats"
+            "(if (= (get_tile \"layers\") \"\") (set_tile \"status\" \"Zaznacz warstwe, dla ktorej pokazac statystyke.\") (progn (setq stats-index (car (geocad-multi-parse-listbox-indexes (get_tile \"layers\")))) (done_dialog 2)))"
           )
 
           (action_tile
@@ -1830,6 +2193,21 @@
 
         ((= status 0)
           (setq selected-layers '("__CANCEL__"))
+        )
+
+        ((= status 2)
+          (progn
+            (setq stats-layer (nth stats-index layers))
+
+            (if stats-layer
+              (geocad-multi-show-layer-stats-dialog records stats-layer)
+            )
+
+            ;; Po zamknieciu statystyk wracamy do wyboru warstw.
+            (setq selected-layers
+              (geocad-multi-select-layers-dialog records layers source-label)
+            )
+          )
         )
 
         ((= status -1)
