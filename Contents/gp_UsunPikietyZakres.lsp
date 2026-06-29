@@ -77,7 +77,7 @@
     (= typ "INSERT")
     (progn
       (setq block-name (gp-usunzakres-effective-block-name ent))
-      (and block-name (= (strcase block-name) "PIKIETA_GEO"))
+      (and block-name (= (strcase block-name) (strcase *geocad-pikieta-block-name*)))
     )
   )
 )
@@ -123,35 +123,17 @@
   )
 )
 
-(defun gp-usunzakres-block-nr-text (ent / obj atts att result)
-  (setq result nil)
-
+(defun gp-usunzakres-block-nr-text (ent / obj)
   (if (gp-usunzakres-block-pikieta-p ent)
     (progn
       (setq obj (gp-usunzakres-vla-object ent))
-
       (if obj
-        (progn
-          (setq atts
-            (vl-catch-all-apply
-              'vlax-invoke
-              (list obj 'GetAttributes)
-            )
-          )
-
-          (if (not (vl-catch-all-error-p atts))
-            (foreach att atts
-              (if (= (strcase (vla-get-TagString att)) "NR")
-                (setq result (vla-get-TextString att))
-              )
-            )
-          )
-        )
+        (geocad-pikieta-attr-nr-text obj)
+        nil
       )
     )
+    nil
   )
-
-  result
 )
 
 (defun gp-usunzakres-string-prefix-p (txt pref)
@@ -422,11 +404,7 @@
   (setq ss
     (ssget
       "X"
-      (list
-        '(0 . "INSERT")
-        '(2 . "Pikieta_Geo")
-        (cons 8 lay-pt)
-      )
+      (geocad-pikieta-block-layer-filter lay-pt)
     )
   )
 

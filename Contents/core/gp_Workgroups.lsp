@@ -266,11 +266,7 @@
       (setq ss
         (ssget
           "_X"
-          (list
-            '(0 . "INSERT")
-            '(2 . "Pikieta_Geo")
-            (cons 8 lay)
-          )
+          (geocad-pikieta-block-layer-filter lay)
         )
       )
       (if ss
@@ -278,7 +274,7 @@
           (setq i 0)
           (while (< i (sslength ss))
             (setq obj (vlax-ename->vla-object (ssname ss i)))
-            (setq nr (geocad-block-attr-text obj "NR"))
+            (setq nr (geocad-pikieta-attr-nr-text obj))
             (setq parsed (geocad-split-pikieta-number nr))
             (if (and parsed (= (car parsed) pref))
               (setq count (1+ count))

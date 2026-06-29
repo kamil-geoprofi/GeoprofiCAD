@@ -168,8 +168,8 @@
 
 (defun geocad-scan-pikt-prefixes-from-group
   (group-prefix / group lay ss i obj nr parsed result)
-  ;; Skanuje realne bloki Pikieta_Geo w danej grupie roboczej
-  ;; i wyciaga prefixy numeracji z atrybutu NR.
+  ;; Skanuje realne bloki pikiet w danej grupie roboczej
+  ;; i wyciaga prefixy numeracji z centralnego atrybutu numeru.
   (setq result '())
   (setq group (geocad-normalize-layer-prefix group-prefix))
 
@@ -182,11 +182,7 @@
       (setq ss
         (ssget
           "_X"
-          (list
-            '(0 . "INSERT")
-            '(2 . "Pikieta_Geo")
-            (cons 8 lay)
-          )
+          (geocad-pikieta-block-layer-filter lay)
         )
       )
 
@@ -196,7 +192,7 @@
 
           (while (< i (sslength ss))
             (setq obj (vlax-ename->vla-object (ssname ss i)))
-            (setq nr (geocad-block-attr-text obj "NR"))
+            (setq nr (geocad-pikieta-attr-nr-text obj))
             (setq parsed (geocad-split-pikieta-number nr))
 
             (if parsed
@@ -263,11 +259,7 @@
       (setq ss
         (ssget
           "_X"
-          (list
-            '(0 . "INSERT")
-            '(2 . "Pikieta_Geo")
-            (cons 8 lay)
-          )
+          (geocad-pikieta-block-layer-filter lay)
         )
       )
 
@@ -277,7 +269,7 @@
 
           (while (< i (sslength ss))
             (setq obj (vlax-ename->vla-object (ssname ss i)))
-            (setq nr (geocad-block-attr-text obj "NR"))
+            (setq nr (geocad-pikieta-attr-nr-text obj))
             (setq parsed (geocad-split-pikieta-number nr))
 
             (if

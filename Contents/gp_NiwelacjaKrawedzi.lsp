@@ -72,12 +72,12 @@
   (setq ssAll
     (ssget
       "X"
-      '(
-        (0 . "INSERT,POINT")
-        (-4 . "<OR")
-        (2 . "Pikieta_Geo")
-        (0 . "POINT")
-        (-4 . "OR>")
+      (list
+        '(0 . "INSERT,POINT")
+        '(-4 . "<OR")
+        (cons 2 *geocad-pikieta-block-name*)
+        '(0 . "POINT")
+        '(-4 . "OR>")
       )
     )
   )

@@ -1,37 +1,22 @@
-(vl-load-com)   
+(vl-load-com)
+(load "gp_Core.lsp" "\nBLAD: Nie znaleziono pliku gp_Core.lsp!")
 
 ;; ==========================================  
 ;; --- FUNKCJE POMOCNICZE I MATEMATYCZNE ---  
 ;; ==========================================  
 
-(defun dist-2d (p1 p2)  
-  (distance (list (car p1) (cadr p1)) (list (car p2) (cadr p2)))  
-)  
+(defun dist-2d (p1 p2)
+  (geocad-dist-2d p1 p2)
+)
 
-(defun categorize-text (txt / norm-txt is-num has-sep)  
-  ;; Ulepszone czyszczenie tekstu (np. ze spacji lub litery "m")
-  (setq norm-txt (vl-string-trim " mM\r\n\t" (vl-string-translate "," "." txt)))  
-  (setq is-num (distof norm-txt))  
-  (setq has-sep (or (vl-string-search "." norm-txt) (vl-string-search "," txt)))  
-  (if (and is-num has-sep) "Z" "ID")  
-)  
+(defun categorize-text (txt)
+  (geocad-text-radar-categorize txt)
+)
 
 ;; ZMODYFIKOWANY ALGORYTM AABB (Podwójna Metryka: Krawędź i Środek)  
-(defun get-dist-to-txt (pt t-item / px py rMinX rMaxX rMinY rMaxY cX cY d-edge cx-center cy-center d-center)  
-  (setq px (car pt) py (cadr pt))  
-  (setq rMinX (min (caar t-item) (caadr t-item)) rMaxX (max (caar t-item) (caadr t-item)))  
-  (setq rMinY (min (cadar t-item) (cadadr t-item)) rMaxY (max (cadar t-item) (cadadr t-item)))  
-
-  ;; 1. Odległość do krawędzi (Do zaliczenia w Radarze)  
-  (setq cX (max rMinX (min px rMaxX)) cY (max rMinY (min py rMaxY)))  
-  (setq d-edge (dist-2d pt (list cX cY)))  
-
-  ;; 2. Odległość do fizycznego środka (Jako Tie-breaker / Sędzia)  
-  (setq cx-center (/ (+ rMinX rMaxX) 2.0) cy-center (/ (+ rMinY rMaxY) 2.0))  
-  (setq d-center (dist-2d pt (list cx-center cy-center)))  
-
-  (list d-edge d-center)  
-)  
+(defun get-dist-to-txt (pt t-item)
+  (geocad-text-radar-distance pt t-item)
+)
 
 (defun geocad-exp-err (msg)   
   (if f (vl-catch-all-apply 'close (list f)))   
@@ -134,11 +119,9 @@
   res   
 )   
 
-(defun parse-tags (str / res tmp)   
-  (setq res '() tmp "")   
-  (foreach ch (vl-string->list (strcase str)) (if (member ch '(44 59 32 9)) (if (/= tmp "") (progn (setq res (cons tmp res)) (setq tmp ""))) (setq tmp (strcat tmp (chr ch)))))   
-  (if (/= tmp "") (setq res (cons tmp res))) (reverse res)   
-)   
+(defun parse-tags (str)
+  (geocad-parse-tags str)
+)
 
 (defun format-coord (val) (vl-string-translate "," "." (rtos val 2 3)))   
 
