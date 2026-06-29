@@ -23,6 +23,7 @@
         <ComponentEntry AppName="Geoprofi_SetupAutosave" ModuleName="./Contents/ui/gp_SetupAutosave.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_SetupPrefix" ModuleName="./Contents/ui/gp_SetupPrefix.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_SetupGroup" ModuleName="./Contents/ui/gp_SetupGroup.lsp" PerDocument="True" />
+        <ComponentEntry AppName="Geoprofi_SetupMain" ModuleName="./Contents/ui/gp_SetupMain.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_Import" ModuleName="./Contents/gp_Import.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Export" ModuleName="./Contents/gp_Export.lsp" PerDocument="True" /> 
         <ComponentEntry AppName="Geoprofi_Wstaw" ModuleName="./Contents/gp_WstawPikiete.lsp" PerDocument="True" /> 
