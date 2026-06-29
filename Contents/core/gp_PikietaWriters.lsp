@@ -14,7 +14,7 @@
     pt-list nr-str txt-h z-prec display
     lay-pt lay-nr lay-h
     /
-    px py pz dX dY z-str show-nr show-h
+    px py pz dX dY z-str show-nr show-h pt-ent nr-ent h-ent
   )
   ;; Wspolny szybki writer tekstowej pikiety.
   ;; Uzywany przez import/wstawianie i przez konwersje Blok -> Tekst.
@@ -50,37 +50,43 @@
     )
   )
 
-  (entmakex
-    (list
-      '(0 . "POINT")
-      (cons 10 pt-list)
-      (cons 8 lay-pt)
+  (setq pt-ent
+    (entmakex
+      (list
+        '(0 . "POINT")
+        (cons 10 pt-list)
+        (cons 8 lay-pt)
+      )
     )
   )
 
-  (entmakex
-    (list
-      '(0 . "TEXT")
-      (cons 10 (list (+ px dX) (+ py dY) pz))
-      (cons 40 txt-h)
-      (cons 1 nr-str)
-      (cons 8 lay-nr)
-      (cons 60 (if show-nr 0 1))
+  (setq nr-ent
+    (entmakex
+      (list
+        '(0 . "TEXT")
+        (cons 10 (list (+ px dX) (+ py dY) pz))
+        (cons 40 txt-h)
+        (cons 1 nr-str)
+        (cons 8 lay-nr)
+        (cons 60 (if show-nr 0 1))
+      )
     )
   )
 
-  (entmakex
-    (list
-      '(0 . "TEXT")
-      (cons 10 (list (+ px dX) (- py dY) pz))
-      (cons 40 txt-h)
-      (cons 1 z-str)
-      (cons 8 lay-h)
-      (cons 60 (if show-h 0 1))
+  (setq h-ent
+    (entmakex
+      (list
+        '(0 . "TEXT")
+        (cons 10 (list (+ px dX) (- py dY) pz))
+        (cons 40 txt-h)
+        (cons 1 z-str)
+        (cons 8 lay-h)
+        (cons 60 (if show-h 0 1))
+      )
     )
   )
 
-  T
+  (and pt-ent nr-ent h-ent)
 )
 
 (defun geocad-stworz-blok-pikieta ()
