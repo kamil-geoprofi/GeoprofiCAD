@@ -726,7 +726,9 @@
     lay-pt lay-nr lay-h
     vis-nr vis-h dX dY
   )
-
+  ;; Jezeli uzytkownik wstawia pikiety bez wchodzenia w GEO_SETUP,
+  ;; nadal inicjalizujemy pamiec DWG z realnego rysunku.
+  (geocad-ensure-dwg-setup-initialized doc)
   ;; Ustawienia czytamy raz na serie pikiet.
   (setq txt-h (atof (geocad-get-cfg "TxtH" "1.0")))
   (setq z-prec (atoi (geocad-get-cfg "Prec" "2")))
@@ -1415,6 +1417,159 @@
   (vl-sort lst '<)
 )
 
+(defun geocad-best-prefix-from-existing-layers
+  (doc / prefixes pref count best best-count)
+  ;; Dla starego DWG bez pamieci projektu wybieramy grupe,
+  ;; ktora ma najwiecej obiektow na standardowych warstwach GeoprofiCAD.
+  (setq prefixes (geocad-get-prefixes-from-layers doc))
+  (setq best "")
+  (setq best-count -1)
+
+  (foreach pref prefixes
+    (setq count (geocad-count-objects-in-group pref))
+
+    (if (> count best-count)
+      (progn
+        (setq best pref)
+        (setq best-count count)
+      )
+    )
+  )
+
+  best
+)
+
+
+(defun geocad-count-pikt-prefix-in-group
+  (group-prefix pikt-pref / group pref lay ss i obj nr parsed count)
+  ;; Liczy realne bloki Pikieta_Geo w danej grupie,
+  ;; ktore maja konkretny prefix numeracji.
+  (setq group (geocad-normalize-layer-prefix group-prefix))
+  (setq pref (geocad-normalize-pikt-prefix pikt-pref))
+  (setq count 0)
+
+  (if (/= group "")
+    (progn
+      (setq lay
+        (geocad-layer-name group *geocad-layer-type-points*)
+      )
+
+      (setq ss
+        (ssget
+          "_X"
+          (list
+            '(0 . "INSERT")
+            '(2 . "Pikieta_Geo")
+            (cons 8 lay)
+          )
+        )
+      )
+
+      (if ss
+        (progn
+          (setq i 0)
+
+          (while (< i (sslength ss))
+            (setq obj (vlax-ename->vla-object (ssname ss i)))
+            (setq nr (geocad-block-attr-text obj "NR"))
+            (setq parsed (geocad-split-pikieta-number nr))
+
+            (if
+              (and
+                parsed
+                (= (car parsed) pref)
+              )
+              (setq count (1+ count))
+            )
+
+            (setq i (1+ i))
+          )
+        )
+      )
+    )
+  )
+
+  count
+)
+
+
+(defun geocad-best-pikt-prefix-for-group
+  (group-prefix / prefixes pref count best best-count)
+  ;; Dla grupy bez zapamietanego prefixu numeracji wybieramy
+  ;; prefix najczesciej wystepujacy w realnych pikietach tej grupy.
+  (setq prefixes
+    (geocad-get-known-pikt-prefixes-for-group group-prefix "")
+  )
+
+  (setq best "")
+  (setq best-count -1)
+
+  (foreach pref prefixes
+    (setq count
+      (geocad-count-pikt-prefix-in-group group-prefix pref)
+    )
+
+    (if (> count best-count)
+      (progn
+        (setq best pref)
+        (setq best-count count)
+      )
+    )
+  )
+
+  best
+)
+
+
+(defun geocad-ensure-dwg-setup-initialized
+  (doc / saved-prefix inferred-prefix saved-pikt inferred-pikt)
+  ;; Inicjalizacja pamieci per DWG.
+  ;;
+  ;; Nowy pusty rysunek:
+  ;; - dostanie POMIAR.
+  ;;
+  ;; Stary rysunek z warstwami GeoprofiCAD, ale bez LDATA:
+  ;; - dostanie aktywna grupe wywnioskowana z istniejacych warstw,
+  ;; - dostanie prefix numeracji wywnioskowany z pikiet tej grupy.
+  ;;
+  ;; Nie uzywamy rejestru Windows.
+  (setq saved-prefix (geocad-setup-ldata-get "Prefix"))
+
+  (if saved-prefix
+    (setq saved-prefix (geocad-normalize-layer-prefix saved-prefix))
+    (setq saved-prefix "")
+  )
+
+  (if (= saved-prefix "")
+    (progn
+      (setq inferred-prefix
+        (geocad-best-prefix-from-existing-layers doc)
+      )
+
+      (if (= inferred-prefix "")
+        (setq inferred-prefix "POMIAR")
+      )
+
+      (setq inferred-pikt
+        (geocad-group-cfg-read
+          inferred-prefix
+          "PiktPrefix"
+          (geocad-best-pikt-prefix-for-group inferred-prefix)
+        )
+      )
+
+      ;; Aktywne ustawienia konkretnego DWG.
+      (geocad-setup-ldata-put "Prefix" inferred-prefix)
+      (geocad-setup-ldata-put "PiktPrefix" inferred-pikt)
+
+      ;; Pamiec grupy w tym DWG.
+      (if (/= inferred-pikt "")
+        (geocad-save-known-pikt-prefix-for-group inferred-prefix inferred-pikt)
+      )
+    )
+  )
+)
+
 
 (defun geocad-update-layer-color-if-exists
   (layers layname kolor / lay)
@@ -1529,6 +1684,9 @@
   ;; - kolor z istniejacych warstw grupy,
   ;; - reszte z aktualnych/globalnych ustawien.
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
+  ;; Jezeli DWG nie ma jeszcze pamieci GeoprofiCAD,
+  ;; inicjalizujemy ja z realnych warstw/pikiet w tym rysunku.
+  (geocad-ensure-dwg-setup-initialized doc)
   (setq pref (geocad-normalize-layer-prefix prefix))
 
   (if (/= pref "")
@@ -1555,7 +1713,7 @@
         (geocad-group-cfg-read
           pref
           "PiktPrefix"
-          ""
+          (geocad-best-pikt-prefix-for-group pref)
         )
       )
 
@@ -2133,7 +2291,11 @@
             (geocad-save-group-settings
               target_prefix
               kolor
-              pikt_pref
+              (geocad-group-cfg-read
+                target_prefix
+                "PiktPrefix"
+                (geocad-best-pikt-prefix-for-group target_prefix)
+              )
               styl
               display
               txt-h
