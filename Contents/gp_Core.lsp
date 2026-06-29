@@ -4001,50 +4001,41 @@
     "(setq pikt_prefix_select_idx (atoi (get_tile \"pikt_pref_select\"))) (setq selected_pikt_prefix (nth pikt_prefix_select_idx pikt_prefix_select_prefixes)) (if (= selected_pikt_prefix *geocad-add-pikt-prefix-marker*) (done_dialog 11) (progn (setq pikt_pref (geocad-setup-activate-pikt-prefix prefix selected_pikt_prefix)) (setq pikt_prefix_bundle (geocad-setup-refresh-pikt-prefix-popup prefix pikt_pref)) (setq pikt_prefix_select_prefixes (car pikt_prefix_bundle)) (setq pikt_prefix_select_display (cadr pikt_prefix_bundle)) (setq pikt_prefix_select_idx (caddr pikt_prefix_bundle)) (geocad-setup-update-param-context prefix pikt_pref) (setq saved_in_dialog T) (set_tile \"dirty_status\" (strcat \"AKTYWNY PREFIX NUMERACJI: \" (geocad-setup-param-prefix-label pikt_pref) \".\"))))"
   )
 
-  ;; Auto-zapis parametrow grupy.
+    ;; Auto-zapis parametrow grupy.
+  ;; Kazda realna zmiana:
+  ;; - zapisuje parametr,
+  ;; - od razu aktualizuje/konwertuje aktywna grupe.
+
   (action_tile
     "txt_h"
-    "(setq save_result (geocad-setup-try-save-txt-h prefix txt-h)) (setq txt-h (cadr save_result))"
+    "(setq save_result (geocad-setup-try-save-txt-h doc prefix txt-h kolor z-prec styl display)) (setq txt-h (cadr save_result))"
   )
 
   (action_tile
     "z_prec"
-    "(setq save_result (geocad-setup-try-save-z-prec prefix z-prec)) (setq z-prec (cadr save_result))"
+    "(setq save_result (geocad-setup-try-save-z-prec doc prefix z-prec kolor txt-h styl display)) (setq z-prec (cadr save_result))"
   )
 
   (action_tile
     "styl_rys"
-    "(setq styl (geocad-setup-autosave-style prefix styl))"
+    "(setq styl (geocad-setup-autosave-style doc prefix styl kolor txt-h z-prec display))"
   )
 
   (action_tile
     "display_mode"
-    "(setq display (geocad-setup-autosave-display prefix display))"
+    "(setq display (geocad-setup-autosave-display doc prefix display kolor txt-h z-prec styl))"
   )
 
   (action_tile
     "kolor"
-    "(setq kolor (geocad-setup-autosave-color prefix kolor))"
+    "(setq kolor (geocad-setup-autosave-color doc prefix kolor txt-h z-prec styl display))"
   )
 
+  ;; ZTags to ustawienie rozpoznawania rzednej z obcych obiektow.
+  ;; Nie aktualizuje pikiet.
   (action_tile
-  "z_tags"
-  "(setq z-tags (geocad-setup-save-z-tags z-tags))"
-)
-
-  ;; Aktualizacja obiektow tej samej grupy.
-  ;; Przed zamknieciem dialogu wymuszamy walidacje pol tekstowych,
-  ;; bo uzytkownik mogl wpisac wartosc i od razu kliknac przycisk.
-  (action_tile
-    "save_update"
-    "(setq save_result (geocad-setup-try-save-txt-h prefix txt-h)) (setq txt-h (cadr save_result)) (if (car save_result) (progn (setq validate_result (geocad-setup-try-save-z-prec prefix z-prec)) (setq z-prec (cadr validate_result)) (if (car validate_result) (progn (setq z-tags (geocad-setup-save-z-tags z-tags)) (setq kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 2)))))"
-  )
-
-  ;; Aktualizacja wszystkich grup.
-  ;; Rowniez walidujemy pola tekstowe przed zamknieciem dialogu.
-  (action_tile
-   "save_update_all"
-    "(setq save_result (geocad-setup-try-save-txt-h prefix txt-h)) (setq txt-h (cadr save_result)) (if (car save_result) (progn (setq validate_result (geocad-setup-try-save-z-prec prefix z-prec)) (setq z-prec (cadr validate_result)) (if (car validate_result) (progn (setq z-tags (geocad-setup-save-z-tags z-tags)) (setq kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 3)))))"
+    "z_tags"
+    "(setq z-tags (geocad-setup-save-z-tags z-tags))"
   )
 
   (action_tile "cancel" "(done_dialog 0)")
