@@ -7,8 +7,9 @@ Refaktor przeszedl z trybu `shadow split` do pracy bez ladowania legacy:
 - `Contents/gp_Core.lsp` jest stabilnym loaderem kompatybilnosci.
 - `Contents/core/gp_CoreRuntime.lsp` jest malym runtime/orchestrator markerem.
 - `Contents/core/gp_CoreLegacy.lsp` nadal istnieje w repo, ale nie jest juz ladowany przez `PackageContents.xml`.
-- AutoCAD powinien teraz korzystac z realnych modulow `core/` i `ui/`.
-- Pelne `GEO_SETUP` po przeniesieniu do modulow UI zostalo uruchomione i potwierdzone w AutoCAD przed wylaczeniem legacy.
+- AutoCAD korzysta teraz z realnych modulow `core/` i `ui/`.
+- Pelne `GEO_SETUP` po przeniesieniu do modulow UI zostalo uruchomione i potwierdzone w AutoCAD.
+- Test bez ladowania `gp_CoreLegacy.lsp` zostal potwierdzony w AutoCAD.
 
 ## Realnie wydzielone moduly core
 
@@ -35,6 +36,5 @@ Refaktor przeszedl z trybu `shadow split` do pracy bez ladowania legacy:
 
 ## Zasada dalszych zmian
 
-1. Najpierw test AutoCAD bez ladowania legacy.
-2. Jezeli wszystko dziala, mozna traktowac split jako stabilny.
-3. Dopiero potem optymalizacje `ssget`, konwersji i przeniesienie radaru tekstow z eksportu.
+1. Split core/UI mozna traktowac jako stabilny po tescie bez ladowania legacy.
+2. Nastepny etap to optymalizacje `ssget`, konwersji i przeniesienie radaru tekstow z eksportu.
