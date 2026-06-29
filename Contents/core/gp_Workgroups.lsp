@@ -59,6 +59,19 @@
   (= (strcase (geocad-group-type prefix)) "IMPORTED")
 )
 
+
+(defun geocad-imported-group-unlocked-p (prefix)
+  (= (geocad-group-cfg-read prefix "ImportedUnlocked" "0") "1")
+)
+
+(defun geocad-set-imported-group-unlocked (prefix flag)
+  (geocad-group-cfg-write
+    prefix
+    "ImportedUnlocked"
+    (if flag "1" "0")
+  )
+)
+
 (defun geocad-group-cfg-write (prefix key value)
   (if
     (and

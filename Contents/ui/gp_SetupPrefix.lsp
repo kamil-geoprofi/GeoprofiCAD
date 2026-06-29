@@ -175,4 +175,49 @@
   values
 )
 
+
+(defun geocad-setup-refresh-imported-unlock-ui (group-prefix / group unlocked)
+  (setq group (geocad-normalize-layer-prefix group-prefix))
+  (if (= group "")
+    (setq group "POMIAR")
+  )
+
+  (if (geocad-imported-group-p group)
+    (progn
+      (setq unlocked (geocad-imported-group-unlocked-p group))
+      (mode_tile "imported_unlock" 0)
+      (set_tile "imported_unlock" (if unlocked "1" "0"))
+      (set_tile
+        "imported_unlock_status"
+        (if unlocked
+          "Bezpiecznik zdjety: mozna dopisywac bez prefixu."
+          "Imported: dopisywanie/generowanie zablokowane."
+        )
+      )
+    )
+    (progn
+      (set_tile "imported_unlock" "0")
+      (mode_tile "imported_unlock" 1)
+      (set_tile "imported_unlock_status" "Generated: prefix numeracji dziala normalnie.")
+    )
+  )
+
+  T
+)
+
+(defun geocad-setup-toggle-imported-unlock (group-prefix / group val)
+  (setq group (geocad-normalize-layer-prefix group-prefix))
+  (setq val (get_tile "imported_unlock"))
+
+  (if (geocad-imported-group-p group)
+    (progn
+      (geocad-set-imported-group-unlocked group (= val "1"))
+      (geocad-setup-refresh-imported-unlock-ui group)
+    )
+    (geocad-setup-refresh-imported-unlock-ui group)
+  )
+
+  (= val "1")
+)
+
 (princ)
