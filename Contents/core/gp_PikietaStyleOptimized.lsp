@@ -2,15 +2,91 @@
 ;; GEOPROFICAD - PIKIETA STYLE OPTIMIZED
 ;; ======================================================
 ;;
-;; Publiczne nadpisania operacji stylu pikiet.
-;; Wlasciwa logika jest w gp_PikietaData.lsp:
-;; DWG -> PikietaData[] -> zapis wariantu docelowego.
+;; Aktywne runtime definicje operacji stylu pikiet.
 ;;
-;; Ten modul jest tez miejscem, w ktorym runtime uzywa centralnego
-;; schematu pikiety z gp_PikietaSchema.lsp.
+;; Zasada porzadkowa:
+;; - jedna wspolna szybka funkcja tworzy wariant tekstowy pikiety,
+;; - import/wstawianie i konwersja Blok -> Tekst uzywaja tej samej funkcji,
+;; - konwersje ida przez PikietaData: DWG -> PikietaData[] -> zapis docelowy.
 ;; ======================================================
 
 (setq *geocad-module-pikietastyleoptimized-loaded* T)
+
+(defun geocad-create-text-pikieta
+  (
+    pt-list nr-str txt-h z-prec display
+    lay-pt lay-nr lay-h
+    /
+    px py pz dX dY z-str show-nr show-h
+  )
+  ;; Wspolny szybki writer tekstowej pikiety.
+  ;; Uzywany przez import/wstawianie i przez konwersje Blok -> Tekst.
+  ;; Celowo jest zgodny z szybka sciezka importu: czyste entmakex,
+  ;; bez COM Visible dla nowo tworzonych tekstow.
+
+  (setq nr-str (geocad-pikieta-empty-nr-if-needed nr-str))
+
+  (setq px (car pt-list))
+  (setq py (cadr pt-list))
+  (setq pz (caddr pt-list))
+
+  (if (not pz)
+    (setq pz 0.0)
+  )
+
+  (setq pt-list (list px py pz))
+  (setq dX (* txt-h 1.2))
+  (setq dY (* txt-h 0.7))
+  (setq z-str (rtos pz 2 z-prec))
+
+  (setq show-nr
+    (if (member display '("Oba" "Numer"))
+      T
+      nil
+    )
+  )
+
+  (setq show-h
+    (if (member display '("Oba" "Rzedna"))
+      T
+      nil
+    )
+  )
+
+  (entmakex
+    (list
+      '(0 . "POINT")
+      (cons 10 pt-list)
+      (cons 8 lay-pt)
+    )
+  )
+
+  (if show-nr
+    (entmakex
+      (list
+        '(0 . "TEXT")
+        (cons 10 (list (+ px dX) (+ py dY) pz))
+        (cons 40 txt-h)
+        (cons 1 nr-str)
+        (cons 8 lay-nr)
+      )
+    )
+  )
+
+  (if show-h
+    (entmakex
+      (list
+        '(0 . "TEXT")
+        (cons 10 (list (+ px dX) (- py dY) pz))
+        (cons 40 txt-h)
+        (cons 1 z-str)
+        (cons 8 lay-h)
+      )
+    )
+  )
+
+  T
+)
 
 (defun geocad-stworz-blok-pikieta ()
   (if (not (tblsearch "BLOCK" *geocad-pikieta-block-name*))
@@ -80,8 +156,10 @@
     vis-nr vis-h dX dY
     pelny-nr px py pz z-str pt-3d blkRef
   )
-  ;; Runtime zgodny ze schematem pikiety.
-  ;; show-z zostaje w sygnaturze dla kompatybilnosci.
+  ;; Import i zwykle wstawianie pikiety ida przez ten punkt.
+  ;; Dla stylu tekstowego delegujemy do wspolnego writer'a,
+  ;; zamiast trzymac druga kopie logiki entmakex.
+
   (setq txt-h (geocad-ctx-get 'txt-h ctx))
   (setq z-prec (geocad-ctx-get 'z-prec ctx))
   (setq styl (geocad-ctx-get 'styl ctx))
@@ -91,12 +169,6 @@
   (setq lay-nr (geocad-ctx-get 'lay-nr ctx))
   (setq lay-h (geocad-ctx-get 'lay-h ctx))
 
-  (setq vis-nr (geocad-ctx-get 'vis-nr ctx))
-  (setq vis-h (geocad-ctx-get 'vis-h ctx))
-
-  (setq dX (geocad-ctx-get 'dX ctx))
-  (setq dY (geocad-ctx-get 'dY ctx))
-
   (if (not nr-str)
     (setq nr-str "")
   )
@@ -104,53 +176,35 @@
   (setq nr-str (vl-princ-to-string nr-str))
   (setq pelny-nr (geocad-pikieta-empty-nr-if-needed (strcat pikt-pref nr-str)))
 
-  (setq px (car pt-list))
-  (setq py (cadr pt-list))
-  (setq pz (caddr pt-list))
-
-  (if (not pz)
-    (setq pz 0.0)
-  )
-
-  (setq pt-list (list px py pz))
-  (setq pt-3d (vlax-3d-point pt-list))
-  (setq z-str (rtos pz 2 z-prec))
-
   (if (= styl "Tekst")
-    (progn
-      (entmakex
-        (list
-          '(0 . "POINT")
-          (cons 10 pt-list)
-          (cons 8 lay-pt)
-        )
-      )
-
-      (if (= vis-nr :vlax-false)
-        (entmakex
-          (list
-            '(0 . "TEXT")
-            (cons 10 (list (+ px dX) (+ py dY) pz))
-            (cons 40 txt-h)
-            (cons 1 pelny-nr)
-            (cons 8 lay-nr)
-          )
-        )
-      )
-
-      (if (= vis-h :vlax-false)
-        (entmakex
-          (list
-            '(0 . "TEXT")
-            (cons 10 (list (+ px dX) (- py dY) pz))
-            (cons 40 txt-h)
-            (cons 1 z-str)
-            (cons 8 lay-h)
-          )
-        )
-      )
+    (geocad-create-text-pikieta
+      pt-list
+      pelny-nr
+      txt-h
+      z-prec
+      (geocad-ctx-get 'display ctx)
+      lay-pt
+      lay-nr
+      lay-h
     )
     (progn
+      (setq vis-nr (geocad-ctx-get 'vis-nr ctx))
+      (setq vis-h (geocad-ctx-get 'vis-h ctx))
+      (setq dX (geocad-ctx-get 'dX ctx))
+      (setq dY (geocad-ctx-get 'dY ctx))
+
+      (setq px (car pt-list))
+      (setq py (cadr pt-list))
+      (setq pz (caddr pt-list))
+
+      (if (not pz)
+        (setq pz 0.0)
+      )
+
+      (setq pt-list (list px py pz))
+      (setq pt-3d (vlax-3d-point pt-list))
+      (setq z-str (rtos pz 2 z-prec))
+
       (setq blkRef
         (vla-InsertBlock
           space
