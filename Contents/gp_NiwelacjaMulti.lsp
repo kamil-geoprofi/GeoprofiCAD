@@ -695,7 +695,7 @@
         (if
           (and
             block-name
-            (= (strcase block-name) "PIKIETA_GEO")
+            (= (strcase block-name) (strcase *geocad-pikieta-block-name*))
           )
           T
           nil
@@ -1033,7 +1033,7 @@
 
             (and
               block-name
-              (= (strcase block-name) "PIKIETA_GEO")
+              (= (strcase block-name) (strcase *geocad-pikieta-block-name*))
             )
           )
 

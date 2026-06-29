@@ -1,4 +1,5 @@
 (vl-load-com)
+(load "gp_Core.lsp" "\nBLAD: Nie znaleziono pliku gp_Core.lsp!")
 
 ;; ======================================================
 ;; USUWANIE PIKIET Z MULTI BEZ KASOWANIA WEZLOW BAZOWYCH
@@ -342,7 +343,7 @@
         (= typ "INSERT")
         (progn
           (setq block-name (gp-usunpktmulti-effective-block-name ent))
-          (= (strcase block-name) "PIKIETA_GEO")
+          (= (strcase block-name) (strcase *geocad-pikieta-block-name*))
         )
       )
     )

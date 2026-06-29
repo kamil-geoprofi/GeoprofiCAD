@@ -76,7 +76,7 @@
                             px py pz pz-geom nr count valid acadObj doc mspace prec-geom-str prec-geom tokens  
                             total-valid current-valid idx-first idx-mid idx-last delim-code current-delim line-first line-mid line-last c1 c2 sys-info len current-format temp-delim dialog-running 
                             dcl-file dcl-fn dcl-id status minX minY maxX maxY dXX dYY margX margY marg p1 p2 
-                            c-nr c-x c-y c-z delim-str do-zoom old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z batch)      
+                            c-nr c-x c-y c-z delim-str do-zoom use-file-nr file-has-nr old-err old-cmdecho old-attmode old-dimzin old-pdmode old-pdsize old-osmode show-z batch)
   
   (setq old-err *error* *error* geocad-err) 
   (setq old-cmdecho (getvar "CMDECHO") old-attmode (getvar "ATTMODE") old-dimzin (getvar "DIMZIN") old-pdmode (getvar "PDMODE") old-pdsize (getvar "PDSIZE") old-osmode (getvar "OSMODE"))  
@@ -102,7 +102,7 @@
   )  
   (close file)  
   (setq sample-lines (reverse sample-lines) current-delim (detect-delim filename line-first) current-format (guess-format-multi sample-lines current-delim))
-  (setq is-flat "0" do-zoom "1" c-nr "1" c-x "3" c-y "2" c-z "4" prec-geom-str "" dialog-running T) 
+  (setq is-flat "0" do-zoom "1" use-file-nr "1" c-nr "1" c-x "3" c-y "2" c-z "4" prec-geom-str "" dialog-running T)
  
   (while dialog-running 
     (setq tokens (safe-tokenize line-first current-delim) len (length tokens))  
@@ -128,6 +128,10 @@
     (write-line "  : boxed_row { label = \"Wlasny uklad (Dla opcji [7])\";" dcl-fn) 
     (write-line (strcat "    : edit_box { key = \"col_nr\"; label = \"Nr:\"; edit_width = 3; value = \"" c-nr "\"; }") dcl-fn) (write-line (strcat "    : edit_box { key = \"col_x\"; label = \"X (CAD):\"; edit_width = 3; value = \"" c-x "\"; }") dcl-fn) (write-line (strcat "    : edit_box { key = \"col_y\"; label = \"Y (CAD):\"; edit_width = 3; value = \"" c-y "\"; }") dcl-fn) (write-line (strcat "    : edit_box { key = \"col_z\"; label = \"Z:\"; edit_width = 3; value = \"" c-z "\"; }") dcl-fn) 
     (write-line "  }" dcl-fn) 
+    (write-line "  : boxed_column { label = \"Numeracja importowanych pikiet\";" dcl-fn)
+    (write-line "    : toggle { key = \"use_file_nr\"; label = \"Uzyj numerow/nazw pikiet z pliku (jesli sa w kolumnach)\"; value = \"1\"; }" dcl-fn)
+    (write-line "    : text { value = \"Odznacz, aby pominac numery z TXT/CSV i numerowac wg biezacej numeracji rysunku.\"; }" dcl-fn)
+    (write-line "  }" dcl-fn)
     (write-line "  : boxed_radio_row { label = \"Wymus separator\"; key = \"delim_choice\";" dcl-fn)  
     (write-line "    : radio_button { key = \"32\"; label = \"Spacja/Tab\"; }" dcl-fn) (write-line "    : radio_button { key = \"59\"; label = \"Srednik (;)\"; }" dcl-fn) (write-line "    : radio_button { key = \"44\"; label = \"Przecinek (,)\"; }" dcl-fn)  
     (write-line "  }" dcl-fn)  
@@ -141,9 +145,9 @@
     (write-line "}" dcl-fn) (close dcl-fn)  
       
     (setq dcl-id (load_dialog dcl-file)) (if (not (new_dialog "GeoFormat" dcl-id)) (progn (alert "Blad okna.") (exit)))  
-    (set_tile "fmt_choice" current-format) (set_tile "delim_choice" (itoa current-delim)) (set_tile "flat_2d" is-flat) (set_tile "prec_geom" prec-geom-str) (set_tile "auto_zoom" do-zoom) (if (< len 3) (mode_tile "accept" 1))  
-    (action_tile "delim_choice" "(setq temp-delim (atoi $value) current-format (get_tile \"fmt_choice\") is-flat (get_tile \"flat_2d\") prec-geom-str (get_tile \"prec_geom\") do-zoom (get_tile \"auto_zoom\") c-nr (get_tile \"col_nr\") c-x (get_tile \"col_x\") c-y (get_tile \"col_y\") c-z (get_tile \"col_z\")) (done_dialog 2)")  
-    (action_tile "accept" "(setq current-format (get_tile \"fmt_choice\") is-flat (get_tile \"flat_2d\") prec-geom-str (get_tile \"prec_geom\") do-zoom (get_tile \"auto_zoom\") final-delim current-delim c-nr (get_tile \"col_nr\") c-x (get_tile \"col_x\") c-y (get_tile \"col_y\") c-z (get_tile \"col_z\")) (done_dialog 1)")  
+    (set_tile "fmt_choice" current-format) (set_tile "delim_choice" (itoa current-delim)) (set_tile "flat_2d" is-flat) (set_tile "prec_geom" prec-geom-str) (set_tile "auto_zoom" do-zoom) (set_tile "use_file_nr" use-file-nr) (if (< len 3) (mode_tile "accept" 1))
+    (action_tile "delim_choice" "(setq temp-delim (atoi $value) current-format (get_tile \"fmt_choice\") is-flat (get_tile \"flat_2d\") prec-geom-str (get_tile \"prec_geom\") do-zoom (get_tile \"auto_zoom\") use-file-nr (get_tile \"use_file_nr\") c-nr (get_tile \"col_nr\") c-x (get_tile \"col_x\") c-y (get_tile \"col_y\") c-z (get_tile \"col_z\")) (done_dialog 2)")
+    (action_tile "accept" "(setq current-format (get_tile \"fmt_choice\") is-flat (get_tile \"flat_2d\") prec-geom-str (get_tile \"prec_geom\") do-zoom (get_tile \"auto_zoom\") use-file-nr (get_tile \"use_file_nr\") final-delim current-delim c-nr (get_tile \"col_nr\") c-x (get_tile \"col_x\") c-y (get_tile \"col_y\") c-z (get_tile \"col_z\")) (done_dialog 1)")
     (action_tile "cancel" "(done_dialog 0)")  
     (setq status (start_dialog)) (unload_dialog dcl-id) (vl-file-delete dcl-file)  
     (cond ((= status 0) (setq dialog-running nil *error* old-err) (exit)) ((= status 1) (setq dialog-running nil)) ((= status 2) (setq current-delim temp-delim))) 
@@ -164,15 +168,15 @@
   (setvar "OSMODE" 0) (setq file (open filename "r"))   
   
   (while (setq raw-line (read-line file))      
-    (setq line (clean-raw-line raw-line) tokens (safe-tokenize line final-delim) valid nil len (length tokens) nr (itoa (1+ count)) px 0.0 py 0.0 pz 0.0)  
+    (setq line (clean-raw-line raw-line) tokens (safe-tokenize line final-delim) valid nil file-has-nr nil len (length tokens) nr nil px 0.0 py 0.0 pz 0.0)
     (cond  
-      ((and (= format-choice "1") (>= len 4)) (setq nr (nth 0 tokens) px (safe-atof (nth 1 tokens)) py (safe-atof (nth 2 tokens)) pz (safe-atof (nth 3 tokens)) valid T))  
-      ((and (= format-choice "2") (>= len 4)) (setq nr (nth 0 tokens) px (safe-atof (nth 2 tokens)) py (safe-atof (nth 1 tokens)) pz (safe-atof (nth 3 tokens)) valid T))  
+      ((and (= format-choice "1") (>= len 4)) (setq nr (nth 0 tokens) file-has-nr T px (safe-atof (nth 1 tokens)) py (safe-atof (nth 2 tokens)) pz (safe-atof (nth 3 tokens)) valid T))
+      ((and (= format-choice "2") (>= len 4)) (setq nr (nth 0 tokens) file-has-nr T px (safe-atof (nth 2 tokens)) py (safe-atof (nth 1 tokens)) pz (safe-atof (nth 3 tokens)) valid T))
       ((and (= format-choice "3") (>= len 3)) (setq px (safe-atof (nth 0 tokens)) py (safe-atof (nth 1 tokens)) pz (safe-atof (nth 2 tokens)) valid T))  
       ((and (= format-choice "4") (>= len 3)) (setq px (safe-atof (nth 1 tokens)) py (safe-atof (nth 0 tokens)) pz (safe-atof (nth 2 tokens)) valid T))  
-      ((and (= format-choice "5") (>= len 3)) (setq nr (nth 0 tokens) px (safe-atof (nth 1 tokens)) py (safe-atof (nth 2 tokens)) pz 0.0 valid T))  
-      ((and (= format-choice "6") (>= len 3)) (setq nr (nth 0 tokens) px (safe-atof (nth 2 tokens)) py (safe-atof (nth 1 tokens)) pz 0.0 valid T))  
-      ((= format-choice "7") (if (and (> c-x 0) (<= c-x len) (> c-y 0) (<= c-y len)) (progn (setq px (safe-atof (nth (1- c-x) tokens))) (setq py (safe-atof (nth (1- c-y) tokens))) (if (and (> c-z 0) (<= c-z len)) (setq pz (safe-atof (nth (1- c-z) tokens)))) (if (and (> c-nr 0) (<= c-nr len)) (setq nr (nth (1- c-nr) tokens))) (setq valid T)))) 
+      ((and (= format-choice "5") (>= len 3)) (setq nr (nth 0 tokens) file-has-nr T px (safe-atof (nth 1 tokens)) py (safe-atof (nth 2 tokens)) pz 0.0 valid T))
+      ((and (= format-choice "6") (>= len 3)) (setq nr (nth 0 tokens) file-has-nr T px (safe-atof (nth 2 tokens)) py (safe-atof (nth 1 tokens)) pz 0.0 valid T))
+      ((= format-choice "7") (if (and (> c-x 0) (<= c-x len) (> c-y 0) (<= c-y len)) (progn (setq px (safe-atof (nth (1- c-x) tokens))) (setq py (safe-atof (nth (1- c-y) tokens))) (if (and (> c-z 0) (<= c-z len)) (setq pz (safe-atof (nth (1- c-z) tokens)))) (if (and (> c-nr 0) (<= c-nr len)) (setq nr (nth (1- c-nr) tokens) file-has-nr T)) (setq valid T))))
     )  
   
     (if (and valid (> px 1000.0) (> py 1000.0))      
@@ -184,8 +188,12 @@
         (setq show-z (if (member format-choice '("1" "2" "3" "4" "7")) T nil))
 
         ;; Czyste oddelegowanie do Biblioteki.
-        ;; Przekazujemy numer z pliku / lokalny numer importu jawnie,
-        ;; wiec zachowujemy stare zachowanie importu.
+        ;; Gdy uzytkownik wylaczy numery z pliku albo format nie ma kolumny NR,
+        ;; przekazujemy nil i batch dobiera kolejny numer z biezacej numeracji rysunku.
+        (if (or (/= use-file-nr "1") (not file-has-nr))
+          (setq nr nil)
+        )
+
         (setq batch
           (geocad-pikieta-batch-insert
             batch
