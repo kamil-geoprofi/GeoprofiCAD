@@ -1324,7 +1324,7 @@
     doc
     prefix_groups
     prefix_select_prefixes prefix_select_display prefix_select_idx
-    update_prefixes update_display target_idx target_prefix
+    target_prefix
   )
 
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
@@ -1362,7 +1362,7 @@
   (setq prefix_groups (vl-sort prefix_groups '<))
 
   ;; Prefixy logiczne dla wyboru aktywnej grupy.
-  ;; Pierwsza pozycja oznacza reczny wpis.
+  ;; Pierwsza pozycja oznacza reczny wpis nowej grupy.
   (setq prefix_select_prefixes
     (cons "" prefix_groups)
   )
@@ -1376,18 +1376,6 @@
     )
   )
 
-  ;; Lista do aktualizacji istniejacych grup.
-  (setq update_prefixes
-    (cons *geocad-all-groups-label* prefix_groups)
-  )
-
-  (setq update_display
-    (cons
-      *geocad-all-groups-label*
-      (geocad-build-prefix-display-list prefix_groups)
-    )
-  )
-
   ;; ------------------------------------------------------
   ;; DCL
   ;; ------------------------------------------------------
@@ -1396,12 +1384,12 @@
 
   (write-line "GeoSetup : dialog { label = \"GEO_SETUP - Grupa robocza GeoprofiCAD\";" dcl-fn)
 
-  (write-line "  : boxed_column { label = \"Aktywna grupa robocza\";" dcl-fn)
-  (write-line "    : popup_list { key = \"prefix_select\"; label = \"Wybierz grupe robocza:\"; width = 45; }" dcl-fn)
+  (write-line "  : boxed_column { label = \"Grupa robocza\";" dcl-fn)
+  (write-line "    : popup_list { key = \"prefix_select\"; label = \"Wybierz grupe:\"; width = 48; }" dcl-fn)
   (write-line "    : edit_box { key = \"prefix\"; label = \"Prefix grupy (np. DROGI):\"; edit_width = 24; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
-  (write-line "  : boxed_column { label = \"Parametry pikiet w tej grupie\";" dcl-fn)
+  (write-line "  : boxed_column { label = \"Parametry tej grupy\";" dcl-fn)
   (write-line "    : popup_list { key = \"styl_rys\"; label = \"Styl na mapie:\"; list = \"Inteligentny Blok\\nZwykly Punkt + Tekst\"; }" dcl-fn)
   (write-line "    : popup_list { key = \"display_mode\"; label = \"Widocznosc:\"; list = \"Oba (Nr + H)\\nTylko Numer\\nTylko Rzedna (H)\\nNic (Sam symbol)\"; }" dcl-fn)
   (write-line "    : edit_box { key = \"txt_h\"; label = \"Wysokosc tekstu:\"; edit_width = 8; }" dcl-fn)
@@ -1411,12 +1399,22 @@
   (write-line "    : popup_list { key = \"kolor\"; label = \"Kolor podstawowy:\"; list = \"1 - Czerwony\\n2 - Zolty\\n3 - Zielony\\n4 - Cyjan\\n5 - Niebieski\\n6 - Magenta\\n7 - Czarny/Bialy\"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
-  (write-line "  : boxed_column { label = \"Zarzadzanie istniejacymi blokami\";" dcl-fn)
-  (write-line "    : popup_list { key = \"exist_layers\"; label = \"Wybierz grupe do zmiany:\"; width = 45; }" dcl-fn)
-  (write-line "    : button { key = \"btn_update\"; label = \"Aktualizuj wybrana grupe powyzszymi parametrami\"; }" dcl-fn)
+  (write-line "  : boxed_column { label = \"Akcje\";" dcl-fn)
+  (write-line "    : text { label = \"Zapisz - zapisuje ustawienia tej grupy dla nowych pikiet.\"; }" dcl-fn)
+  (write-line "    : text { label = \"Zapisz i aktualizuj - zapisuje ustawienia i poprawia istniejace obiekty tej grupy.\"; }" dcl-fn)
+  (write-line "    : text { label = \"Wszystkie grupy - stosuje aktualne parametry hurtowo do wszystkich grup w rysunku.\"; }" dcl-fn)
   (write-line "  }" dcl-fn)
 
-  (write-line "  ok_cancel;" dcl-fn)
+  (write-line "  : row { alignment = centered;" dcl-fn)
+  (write-line "    : button { key = \"save_only\"; label = \"Zapisz\"; is_default = true; }" dcl-fn)
+  (write-line "    : button { key = \"save_update\"; label = \"Zapisz i aktualizuj te grupe\"; }" dcl-fn)
+  (write-line "  }" dcl-fn)
+
+  (write-line "  : row { alignment = centered;" dcl-fn)
+  (write-line "    : button { key = \"save_update_all\"; label = \"Zapisz i aktualizuj wszystkie grupy\"; }" dcl-fn)
+  (write-line "    : button { key = \"cancel\"; label = \"Anuluj\"; is_cancel = true; }" dcl-fn)
+  (write-line "  }" dcl-fn)
+
   (write-line "}" dcl-fn)
 
   (close dcl-fn)
@@ -1436,10 +1434,6 @@
   ;; ------------------------------------------------------
   (start_list "prefix_select")
   (mapcar 'add_list prefix_select_display)
-  (end_list)
-
-  (start_list "exist_layers")
-  (mapcar 'add_list update_display)
   (end_list)
 
   ;; ------------------------------------------------------
@@ -1481,20 +1475,32 @@
 
   ;; Wybor grupy:
   ;; - popup pokazuje opis z liczba obiektow,
-  ;; - ale wewnetrznie uzywamy czystego prefixu z prefix_select_prefixes.
+  ;; - wewnetrznie uzywamy czystego prefixu z prefix_select_prefixes.
+  ;; Po wyborze grupy pola automatycznie laduja jej pamiec z DWG.
   (action_tile
     "prefix_select"
     "(setq prefix_select_idx (atoi (get_tile \"prefix_select\"))) (if (> prefix_select_idx 0) (geocad-setup-apply-group-to-dialog (nth prefix_select_idx prefix_select_prefixes)))"
   )
 
+  ;; Status 1:
+  ;; tylko zapis ustawien aktywnej grupy.
   (action_tile
-    "btn_update"
-    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\") target_idx (atoi (get_tile \"exist_layers\"))) (done_dialog 2)"
+    "save_only"
+    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)"
   )
 
+  ;; Status 2:
+  ;; zapis ustawien + aktualizacja obiektow tej samej grupy.
   (action_tile
-    "accept"
-    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 1)"
+    "save_update"
+    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 2)"
+  )
+
+  ;; Status 3:
+  ;; zapis ustawien aktywnej grupy + hurtowa aktualizacja wszystkich grup.
+  (action_tile
+    "save_update_all"
+    "(setq txt-h (get_tile \"txt_h\") z-prec (get_tile \"z_prec\") prefix (get_tile \"prefix\") pikt_pref (get_tile \"pikt_pref\") z_tags (get_tile \"z_tags\") kolor (itoa (1+ (atoi (get_tile \"kolor\")))) styl-idx (get_tile \"styl_rys\") disp-idx (get_tile \"display_mode\")) (done_dialog 3)"
   )
 
   (action_tile "cancel" "(done_dialog 0)")
@@ -1504,13 +1510,15 @@
   (vl-file-delete dcl-file)
 
   ;; ------------------------------------------------------
-  ;; Zapis po OK albo aktualizacji.
+  ;; Zapis po akcji.
+  ;;
+  ;; status 0 = Anuluj
+  ;; status 1 = Zapisz
+  ;; status 2 = Zapisz i aktualizuj te grupe
+  ;; status 3 = Zapisz i aktualizuj wszystkie grupy
   ;; ------------------------------------------------------
   (if
-    (or
-      (= status 1)
-      (= status 2)
-    )
+    (member status '(1 2 3))
     (progn
       (setq styl
         (if (= styl-idx "1")
@@ -1523,6 +1531,8 @@
         (geocad-display-from-popup-index disp-idx)
       )
 
+      ;; Prefix jest zawsze czysta nazwa grupy.
+      ;; Jezeli ktos wpisze DROGI_PIKIETY, zapisze sie DROGI.
       (setq prefix (geocad-normalize-layer-prefix prefix))
       (setq pikt_pref (geocad-trim-string pikt_pref))
       (setq z_tags (geocad-trim-string z_tags))
@@ -1531,9 +1541,11 @@
         (setq prefix "POMIAR")
       )
 
-      ;; Zapis aktywnych ustawien:
+      ;; ------------------------------------------------------
+      ;; Zapis aktywnej grupy:
       ;; - do DWG,
       ;; - do rejestru jako fallback globalny.
+      ;; ------------------------------------------------------
       (geocad-set-cfg "Styl" styl)
       (geocad-set-cfg "Display" display)
       (geocad-set-cfg "TxtH" txt-h)
@@ -1543,7 +1555,9 @@
       (geocad-set-cfg "ZTags" z_tags)
       (geocad-set-cfg "Color" kolor)
 
-      ;; Zapis pamieci grupy roboczej w tym DWG.
+      ;; ------------------------------------------------------
+      ;; Zapis pamieci aktualnej grupy w tym DWG.
+      ;; ------------------------------------------------------
       (geocad-save-group-settings
         prefix
         kolor
@@ -1555,23 +1569,58 @@
         z_tags
       )
 
+      ;; ------------------------------------------------------
+      ;; Status 1: tylko zapis.
+      ;; ------------------------------------------------------
       (if (= status 1)
         (princ
           (strcat
-            "\n[OK] Zapisano grupe robocza: "
+            "\n[OK] Zapisano ustawienia grupy roboczej: "
             prefix
             ". Nowe pikiety beda tworzone na warstwach tej grupy."
           )
         )
       )
 
+      ;; ------------------------------------------------------
+      ;; Status 2:
+      ;; zapis + aktualizacja obiektow tej samej grupy.
+      ;; Nie ma juz drugiej listy, wiec nie da sie pomylic:
+      ;; wybrana grupa = zapisywana grupa = aktualizowana grupa.
+      ;; ------------------------------------------------------
       (if (= status 2)
         (progn
-          (setq target_prefix (nth target_idx update_prefixes))
+          (setq target_prefix prefix)
 
-          ;; Jezeli aktualizujemy konkretna grupe, zapisujemy te parametry
-          ;; rowniez jako jej pamiec w DWG.
-          (if (/= target_prefix *geocad-all-groups-label*)
+          (geocad-update-existing
+            doc
+            target_prefix
+            kolor
+            txt-h
+            z-prec
+            display
+          )
+
+          (princ
+            (strcat
+              "\n[OK] Zapisano i zaktualizowano grupe robocza: "
+              target_prefix
+              "."
+            )
+          )
+        )
+      )
+
+      ;; ------------------------------------------------------
+      ;; Status 3:
+      ;; hurtowo zapisuje te same parametry jako pamiec wszystkich
+      ;; istniejacych grup i aktualizuje wszystkie bloki w rysunku.
+      ;;
+      ;; To jest celowo osobny przycisk, bo to operacja globalna.
+      ;; ------------------------------------------------------
+      (if (= status 3)
+        (progn
+          (foreach target_prefix prefix_groups
             (geocad-save-group-settings
               target_prefix
               kolor
@@ -1586,16 +1635,20 @@
 
           (geocad-update-existing
             doc
-            target_prefix
+            *geocad-all-groups-label*
             kolor
             txt-h
             z-prec
             display
           )
+
+          (princ
+            "\n[OK] Zapisano i zaktualizowano wszystkie grupy w rysunku."
+          )
         )
       )
     )
-    (princ "\n[Anulowano]")
+    (princ "\n[Anulowano] Nie zapisano zmian.")
   )
 
   (princ)
