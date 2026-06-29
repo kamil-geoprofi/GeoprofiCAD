@@ -23,7 +23,6 @@
         <ComponentEntry AppName="Geoprofi_PikietaStyle" ModuleName="./Contents/core/gp_PikietaStyle.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_PikietaData" ModuleName="./Contents/core/gp_PikietaData.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_PikietaStyleOptimized" ModuleName="./Contents/core/gp_PikietaStyleOptimized.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_PikietaTextFast" ModuleName="./Contents/core/gp_PikietaTextFast.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_SetupDialog" ModuleName="./Contents/ui/gp_SetupDialog.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_SetupAutosave" ModuleName="./Contents/ui/gp_SetupAutosave.lsp" PerDocument="True" />
         <ComponentEntry AppName="Geoprofi_SetupPrefix" ModuleName="./Contents/ui/gp_SetupPrefix.lsp" PerDocument="True" />
