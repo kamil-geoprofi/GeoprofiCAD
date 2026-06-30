@@ -38,6 +38,21 @@
   (if (and is-num has-sep) "Z" "ID")
 )
 
+
+(defun geocad-text-radar-z-value (txt / norm-txt val)
+  ;; Zwraca wartosc liczbowa tekstu rzednej albo nil.
+  ;; Uzywamy tej samej normalizacji co kategoryzacja radaru,
+  ;; zeby eksport nie odczytywal Z innym algorytmem niz raport.
+  (setq norm-txt
+    (vl-string-trim
+      " mM\r\n\t"
+      (vl-string-translate "," "." (if txt txt ""))
+    )
+  )
+  (setq val (distof norm-txt))
+  val
+)
+
 (defun geocad-text-radar-object-string (obj / val)
   (setq val "")
   (if obj

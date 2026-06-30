@@ -358,9 +358,17 @@
           (setq dists (get-dist-to-txt pt t-i) d-edge (car dists) d-center (cadr dists))   
           (if (<= d-edge txt_rad)   
             (progn  
-              ;; POBIERZ Z Z TEKSTU TYLKO JEŚLI PUNKT JEST "PŁASKI" (Z = 0)
-              (if (and (= (nth 3 t-i) "Z") (not f-z) (< d-center m-z) (<= (abs z) 0.001))   
-                  (setq m-z d-center c-z (distof (vl-string-trim " mM\r\n\t" (vl-string-translate "," "." (nth 2 t-i))))))  
+              ;; POBIERZ Z Z TEKSTU, gdy nie ma rzednej z atrybutu bloku.
+              ;; Tekst wybrany przez uzytkownika ma pierwszenstwo przed Z geometrii
+              ;; punktu/obiektu, bo w pomiarach wysokosc bywa opisana obok obiektu.
+              (if (and (= (nth 3 t-i) "Z") (not f-z) (< d-center m-z))
+                  (progn
+                    (setq t-val (geocad-text-radar-z-value (nth 2 t-i)))
+                    (if t-val
+                      (setq m-z d-center c-z t-val)
+                    )
+                  )
+              )
 
               ;; POBIERZ ID Z TEKSTU
               (if (and (= renum_all "0") (= (nth 3 t-i) "ID") (= nr "") (< d-center m-id))   
