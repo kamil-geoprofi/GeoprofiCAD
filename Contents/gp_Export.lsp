@@ -130,7 +130,7 @@
 ;; --- GŁÓWNA KOMENDA EKSPORTU ---  
 ;; ==========================================  
 
-(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id z_offset z_offset_str export_format export-lines export-line)   
+(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id z_offset z_offset_str export_format export-lines export-line z_conflict_mode conflict-items conflict_index geom-has-z own-z near-z-count nearest-z att)
 
   (setq old-err *error* *error* geocad-exp-err f nil)   
 
@@ -195,20 +195,73 @@
     (progn (foreach tg (reverse found-tags) (setq tags-str (strcat tags-str tg ", "))) (setq tags-str (strcat "[" (substr tags-str 1 (- (strlen tags-str) 2)) "]")))   
     (setq tags-str "Brak"))   
 
-  ;; Funkcja radaru dzialajaca TYLKO na unikalnych punktach  
-  (setq run-analysis (lambda (rad / z-hit id-hit has-z has-id)  
-    (setq z-hit 0 id-hit 0)  
-    (foreach p unique-pts  
-      (setq pt (car p) has-z nil has-id nil)  
-      (foreach t-i txt-list  
-        (setq dists (get-dist-to-txt pt t-i))  
-        (if (<= (car dists) rad)  
-          (progn (if (and (= (nth 3 t-i) "Z") (not has-z)) (setq has-z T z-hit (1+ z-hit)))  
-                 (if (and (= (nth 3 t-i) "ID") (not has-id)) (setq has-id T id-hit (1+ id-hit))))))  
-    )  
-    (set_tile "rep_z" (strcat "Dopasowano rzednych: " (itoa z-hit) " / " (itoa (length unique-pts))))  
-    (set_tile "rep_id" (strcat "Dopasowano numerow: " (itoa id-hit) " / " (itoa (length unique-pts))))  
-  ))  
+  ;; Funkcja radaru dzialajaca TYLKO na unikalnych punktach.
+  ;; Buduje tez liste konfliktow Z widoczna w oknie eksportu.
+  (setq z_conflict_mode "keep" conflict_index 0)
+  (setq run-analysis (lambda (rad / z-hit id-hit conflict-hit has-z has-id p-idx desc)
+    (setq z-hit 0 id-hit 0 conflict-hit 0 conflict-items '() p-idx 1)
+    (foreach p unique-pts
+      (setq pt (car p) obj (cadr p) has-z nil has-id nil near-z-count 0 nearest-z nil)
+      (setq geom-has-z (and (caddr pt) (> (abs (caddr pt)) 0.001)))
+      (setq own-z geom-has-z)
+      (if (= (vla-get-ObjectName obj) "AcDbBlockReference")
+        (foreach att (vlax-invoke obj 'GetAttributes)
+          (if (member (strcase (vla-get-TagString att)) '("H" "Z" "RZEDNA"))
+            (setq own-z T)
+          )
+        )
+      )
+      (foreach t-i txt-list
+        (setq dists (get-dist-to-txt pt t-i))
+        (if (<= (car dists) rad)
+          (progn
+            (if (= (nth 3 t-i) "Z")
+              (progn
+                (setq t-val (geocad-text-radar-z-value (nth 2 t-i)))
+                (if t-val
+                  (progn
+                    (setq near-z-count (1+ near-z-count))
+                    (if (or (not nearest-z) (< (cadr dists) (car nearest-z)))
+                      (setq nearest-z (list (cadr dists) t-val))
+                    )
+                  )
+                )
+              )
+            )
+            (if (and (= (nth 3 t-i) "ID") (not has-id))
+              (setq has-id T id-hit (1+ id-hit))
+            )
+          )
+        )
+      )
+      (setq has-z (or own-z nearest-z))
+      (if has-z (setq z-hit (1+ z-hit)))
+      (if (and nearest-z (or own-z (> near-z-count 1)))
+        (progn
+          (setq conflict-hit (1+ conflict-hit))
+          (setq desc
+            (strcat
+              (itoa p-idx) ". X=" (rtos (car pt) 2 3)
+              " Y=" (rtos (cadr pt) 2 3)
+              " | obiekt Z=" (if geom-has-z (rtos (caddr pt) 2 3) (if own-z "atrybut" "brak"))
+              " | tekst Z=" (rtos (cadr nearest-z) 2 3)
+              " | tekstow=" (itoa near-z-count)
+            )
+          )
+          (setq conflict-items (append conflict-items (list (list pt desc))))
+        )
+      )
+      (setq p-idx (1+ p-idx))
+    )
+    (set_tile "rep_z" (strcat "Dopasowano rzednych: " (itoa z-hit) " / " (itoa (length unique-pts)) " (konflikty: " (itoa conflict-hit) ")"))
+    (set_tile "rep_id" (strcat "Dopasowano numerow: " (itoa id-hit) " / " (itoa (length unique-pts))))
+    (start_list "z_conflicts")
+    (if conflict-items
+      (foreach ci conflict-items (add_list (cadr ci)))
+      (add_list "Brak konfliktow Z w aktualnym promieniu radaru.")
+    )
+    (end_list)
+  ))
 
   ;; 2. DYNAMICZNE OKNO DCL  
   (setq dcl-file (vl-filename-mktemp "geo10.dcl") dcl-fn (open dcl-file "w"))    
@@ -239,6 +292,16 @@
   (write-line "    : text { key = \"rep_z\"; value=\"...\"; }" dcl-fn)  
   (write-line "    : text { key = \"rep_id\"; value=\"...\"; }" dcl-fn)  
   (write-line "  }" dcl-fn)  
+
+  (write-line "  : boxed_column { label = \"Konflikty rzednych Z\";" dcl-fn)
+  (write-line "    : text { label = \"Obiekt ma wlasne Z i tekst Z obok albo kilka tekstow Z lezy przy jednym obiekcie.\"; }" dcl-fn)
+  (write-line "    : list_box { key = \"z_conflicts\"; height = 5; width = 90; }" dcl-fn)
+  (write-line "    : row { : button { key = \"zoom_conflict\"; label = \"Pokaz miejsce\"; } }" dcl-fn)
+  (write-line "    : radio_row { key = \"z_conf_mode\";" dcl-fn)
+  (write-line "      : radio_button { key = \"keep\"; label = \"Zostaw Z obiektu\"; value = \"1\"; }" dcl-fn)
+  (write-line "      : radio_button { key = \"text\"; label = \"Nadpisz Z tekstem\"; }" dcl-fn)
+  (write-line "    }" dcl-fn)
+  (write-line "  }" dcl-fn)
 
   (if (> c-solids 0)  
     (progn (write-line "  : boxed_radio_row { label = \"Eksport Bryl SOLID\"; key = \"s_m\";" dcl-fn)   
@@ -285,8 +348,10 @@
 
   (run-analysis 1.5)  
 
-  (action_tile "recalc" "(run-analysis (atof (get_tile \"t_r\")))")  
-  (action_tile "accept" "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\") export_format (get_tile \"out_fmt\")) (done_dialog 1)")    
+  (action_tile "z_conflicts" "(setq conflict_index (atoi $value))")
+  (action_tile "zoom_conflict" "(if (not conflict_index) (setq conflict_index 0)) (if (and conflict-items (nth conflict_index conflict-items)) (progn (setq pt (car (nth conflict_index conflict-items))) (command \"_.ZOOM\" \"_C\" pt (max 5.0 (* 4.0 (atof (get_tile \"t_r\")))))))")
+  (action_tile "recalc" "(setq z_conflict_mode (get_tile \"z_conf_mode\")) (run-analysis (atof (get_tile \"t_r\")))")
+  (action_tile "accept" "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\") export_format (get_tile \"out_fmt\") z_conflict_mode (get_tile \"z_conf_mode\")) (done_dialog 1)")
 
   (setq status (start_dialog)) (unload_dialog dcl-id) (vl-file-delete dcl-file)    
   (if (= status 0) (exit))   
@@ -332,6 +397,7 @@
 
   (foreach item (reverse final-pts)   
     (setq pt (car item) obj (cadr item) x (car pt) y (cadr pt) z (caddr pt) nr "" f-z nil is-dupe nil)   
+    (setq geom-has-z (and z (> (abs z) 0.001)))
 
     ;; KONTROLA DUPLIKATÓW GEOMETRII (Z tolerancją użytkownika) 
     (if (= dupe_mode "rem")  
@@ -353,15 +419,15 @@
             (if (member tstr z-tags) (setq z (atof (vl-string-translate "," "." (vla-get-TextString att))) f-z T))))   
 
         ;; POBIERANIE DANYCH Z RADARU 
+        (setq own-z (or f-z geom-has-z))
         (setq m-z 9999.0 m-id 9999.0 c-z nil c-id "")   
         (foreach t-i txt-list   
           (setq dists (get-dist-to-txt pt t-i) d-edge (car dists) d-center (cadr dists))   
           (if (<= d-edge txt_rad)   
             (progn  
-              ;; POBIERZ Z Z TEKSTU, gdy nie ma rzednej z atrybutu bloku.
-              ;; Tekst wybrany przez uzytkownika ma pierwszenstwo przed Z geometrii
-              ;; punktu/obiektu, bo w pomiarach wysokosc bywa opisana obok obiektu.
-              (if (and (= (nth 3 t-i) "Z") (not f-z) (< d-center m-z))
+              ;; POBIERZ Z Z TEKSTU automatycznie tylko dla obiektow bez wlasnego Z.
+              ;; Przy konflikcie obiekt Z vs tekst Z decyzja pochodzi z okna eksportu.
+              (if (and (= (nth 3 t-i) "Z") (or (not own-z) (= z_conflict_mode "text")) (< d-center m-z))
                   (progn
                     (setq t-val (geocad-text-radar-z-value (nth 2 t-i)))
                     (if t-val
