@@ -2056,7 +2056,12 @@
 
           (action_tile
             "show"
-            "(setq selected-index (atoi (get_tile \"points\"))) (setq selected-record (nth selected-index sorted-records)) (done_dialog 1)"
+            "(setq selected-index (atoi (get_tile \"points\"))) (setq selected-record (nth selected-index sorted-records)) (if selected-record (geocad-multi-show-record-in-drawing selected-record))"
+          )
+
+          (action_tile
+            "points"
+            "(if (= $reason 4) (progn (setq selected-index (atoi $value)) (setq selected-record (nth selected-index sorted-records)) (if selected-record (geocad-multi-show-record-in-drawing selected-record))))"
           )
 
           (action_tile "close" "(done_dialog 0)")
@@ -2070,13 +2075,6 @@
 
       (vl-file-delete dcl-file)
 
-      (if
-        (and
-          (= status 1)
-          selected-record
-        )
-        (geocad-multi-show-record-in-drawing selected-record)
-      )
     )
   )
 
