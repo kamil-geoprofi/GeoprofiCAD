@@ -1039,6 +1039,122 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Czy Z miesci sie miedzy Z wezlow segmentu ---
+(defun geocad-multi-z-in-node-range-p (z z1 z2 tolerance / z-min z-max)
+  (if
+    (and
+      (numberp z)
+      (numberp z1)
+      (numberp z2)
+    )
+    (progn
+      (setq z-min (min z1 z2))
+      (setq z-max (max z1 z2))
+
+      (and
+        (>= z (- z-min tolerance))
+        (<= z (+ z-max tolerance))
+      )
+    )
+
+    nil
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Dopisanie ostrzezenia walidacji Z ---
+(defun geocad-multi-add-z-range-warning
+  (
+    warnings segment-index mode L z L1 Z1 L2 Z2
+    /
+    z-min z-max tolerance
+  )
+
+  ;; Niezalezny test po wyliczeniu punktu posredniego:
+  ;; Z wygenerowanej pikiety powinno miescic sie w zakresie Z wezlow segmentu.
+  (setq tolerance 0.001)
+
+  (if
+    (and
+      (numberp z)
+      (numberp Z1)
+      (numberp Z2)
+      (not (geocad-multi-z-in-node-range-p z Z1 Z2 tolerance))
+    )
+    (progn
+      (setq z-min (min Z1 Z2))
+      (setq z-max (max Z1 Z2))
+
+      (append
+        warnings
+        (list
+          (strcat
+            "segment "
+            (itoa (1+ segment-index))
+            " / "
+            mode
+            ": L="
+            (rtos L 2 3)
+            ", Z="
+            (rtos z 2 3)
+            " poza zakresem wezlow "
+            (rtos z-min 2 3)
+            " - "
+            (rtos z-max 2 3)
+          )
+        )
+      )
+    )
+
+    warnings
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Raport walidacji Z po generowaniu ---
+(defun geocad-multi-report-z-range-warnings (warnings / msg cnt shown item)
+  (setq cnt (length warnings))
+
+  (if (> cnt 0)
+    (progn
+      (setq msg
+        (strcat
+          "UWAGA: niezalezny test Z wykryl "
+          (itoa cnt)
+          " pikiet poza zakresem Z swoich wezlow."
+        )
+      )
+
+      (setq shown 0)
+      (foreach item warnings
+        (if (< shown 8)
+          (progn
+            (setq msg (strcat msg "\n- " item))
+            (setq shown (1+ shown))
+          )
+        )
+      )
+
+      (if (> cnt shown)
+        (setq msg
+          (strcat
+            msg
+            "\n... oraz "
+            (itoa (- cnt shown))
+            " kolejnych."
+          )
+        )
+      )
+
+      (alert msg)
+      (princ (strcat "\n" msg))
+    )
+
+    (princ "\n[OK] Niezalezny test Z: wszystkie pikiety posrednie sa w zakresie Z swoich wezlow.")
+  )
+)
+
+
 
 ;; --- FUNKCJA POMOCNICZA: Porownanie nazw warstw ---
 (defun geocad-multi-layer-equal-p (a b)
@@ -3076,10 +3192,10 @@
     auto-omitted omitted
     auto-tolerance tol-input point-mode point-layer selected-layer
     closed-curve total-len
-    node1 node2 L1 Z1 L2 Z2 dL slope
-    node-insert-result inserted-node-Ls insert-base-nodes
-    mode step num-pts segment-step L-cur segment-count effective-step k
-    doc space pt-cur z-cur zlicz draw-3d poly-pts
+      node1 node2 L1 Z1 L2 Z2 dL slope
+      node-insert-result inserted-node-Ls insert-base-nodes
+      mode step num-pts segment-step L-cur segment-count effective-step k
+      doc space pt-cur z-cur zlicz draw-3d poly-pts z-range-warnings
     poly-layer
     batch
     i
@@ -3584,6 +3700,7 @@
   (setq zlicz 0)
   (setq poly-pts '())
   (setq inserted-node-Ls '())
+  (setq z-range-warnings '())
 
 
   ;; Zabezpieczenie pierwszej krawedzi do 3D.
@@ -3694,10 +3811,24 @@
               (setq z-cur (+ Z1 (* (- L-cur L1) slope)))
               (setq pt-cur (get-safe-curve-pt-wrapped crvObj L-cur total-len closed-curve))
 
-              (if pt-cur
-                (progn
-                  (setq batch
-                    (geocad-pikieta-batch-insert
+                (if pt-cur
+                  (progn
+                    (setq z-range-warnings
+                      (geocad-multi-add-z-range-warning
+                        z-range-warnings
+                        i
+                        mode
+                        L-cur
+                        z-cur
+                        L1
+                        Z1
+                        L2
+                        Z2
+                      )
+                    )
+
+                    (setq batch
+                      (geocad-pikieta-batch-insert
                       batch
                       space
                       (list
@@ -3745,10 +3876,24 @@
               (setq z-cur (+ Z1 (* (- L-cur L1) slope)))
               (setq pt-cur (get-safe-curve-pt-wrapped crvObj L-cur total-len closed-curve))
 
-              (if pt-cur
-                (progn
-                  (setq batch
-                    (geocad-pikieta-batch-insert
+                (if pt-cur
+                  (progn
+                    (setq z-range-warnings
+                      (geocad-multi-add-z-range-warning
+                        z-range-warnings
+                        i
+                        mode
+                        L-cur
+                        z-cur
+                        L1
+                        Z1
+                        L2
+                        Z2
+                      )
+                    )
+
+                    (setq batch
+                      (geocad-pikieta-batch-insert
                       batch
                       space
                       (list
@@ -3798,10 +3943,24 @@
                   (setq z-cur (+ Z1 (* (- L-cur L1) slope)))
                   (setq pt-cur (get-safe-curve-pt-wrapped crvObj L-cur total-len closed-curve))
 
-                  (if pt-cur
-                    (progn
-                      (setq batch
-                        (geocad-pikieta-batch-insert
+                    (if pt-cur
+                      (progn
+                        (setq z-range-warnings
+                          (geocad-multi-add-z-range-warning
+                            z-range-warnings
+                            i
+                            mode
+                            L-cur
+                            z-cur
+                            L1
+                            Z1
+                            L2
+                            Z2
+                          )
+                        )
+
+                        (setq batch
+                          (geocad-pikieta-batch-insert
                           batch
                           space
                           (list
@@ -3894,6 +4053,10 @@
       (setq batch nil)
     )
   )
+
+  ;; Niezalezny test wysokosci punktow posrednich po generowaniu.
+  ;; Kazda pikieta miedzy wezlami powinna miec Z w zakresie Z wezlow segmentu.
+  (geocad-multi-report-z-range-warnings z-range-warnings)
 
 
   ;; --- 6. RYSOWANIE POLILINII 3D ---
