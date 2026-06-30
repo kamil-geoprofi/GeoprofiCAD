@@ -125,6 +125,23 @@
 
 (defun format-coord (val) (vl-string-translate "," "." (rtos val 2 3)))   
 
+(defun geocad-export-show-point (pt / acadObj margin p1 p2)
+  ;; Bezpieczne przyblizenie punktu z DCL bez wywolywania command.
+  ;; Wzorowane na podgladzie rekordow w NIWELACJA_MULTI.
+  (if pt
+    (progn
+      (setq acadObj (vlax-get-acad-object))
+      (setq margin 5.0)
+      (setq p1 (list (- (car pt) margin) (- (cadr pt) margin) 0.0))
+      (setq p2 (list (+ (car pt) margin) (+ (cadr pt) margin) 0.0))
+      (vl-catch-all-apply
+        'vla-ZoomWindow
+        (list acadObj (vlax-3d-point p1) (vlax-3d-point p2))
+      )
+    )
+  )
+)
+
 
 ;; ==========================================  
 ;; --- GŁÓWNA KOMENDA EKSPORTU ---  
@@ -197,7 +214,7 @@
 
   ;; Funkcja radaru dzialajaca TYLKO na unikalnych punktach.
   ;; Buduje tez liste konfliktow Z widoczna w oknie eksportu.
-  (setq z_conflict_mode "keep" conflict_index 0)
+  (setq z_conflict_mode "z_keep" conflict_index 0)
   (setq run-analysis (lambda (rad / z-hit id-hit conflict-hit has-z has-id p-idx desc)
     (setq z-hit 0 id-hit 0 conflict-hit 0 conflict-items '() p-idx 1)
     (foreach p unique-pts
@@ -261,11 +278,14 @@
       (add_list "Brak konfliktow Z w aktualnym promieniu radaru.")
     )
     (end_list)
+    (set_tile "z_conflicts" "0")
   ))
 
   ;; 2. DYNAMICZNE OKNO DCL  
   (setq dcl-file (vl-filename-mktemp "geo10.dcl") dcl-fn (open dcl-file "w"))    
   (write-line "Geo10 : dialog { label = \"Eksport V10 (Pelna Kontrola)\";" dcl-fn)    
+  (write-line "  : row {" dcl-fn)
+  (write-line "  : column {" dcl-fn)
   (write-line "  : boxed_column { label = \"Analiza Przestrzenna (WCS)\";" dcl-fn)    
   (write-line (strcat "    : text { label = \"Rozpoznany Uklad: " detected-sys "\"; }") dcl-fn)   
   (if sys-warn (write-line "    : text { label = \"UWAGA: Wykryto rozbieznosci wspolrzednych!\"; }" dcl-fn))   
@@ -292,16 +312,6 @@
   (write-line "    : text { key = \"rep_z\"; value=\"...\"; }" dcl-fn)  
   (write-line "    : text { key = \"rep_id\"; value=\"...\"; }" dcl-fn)  
   (write-line "  }" dcl-fn)  
-
-  (write-line "  : boxed_column { label = \"Konflikty rzednych Z\";" dcl-fn)
-  (write-line "    : text { label = \"Obiekt ma wlasne Z i tekst Z obok albo kilka tekstow Z lezy przy jednym obiekcie.\"; }" dcl-fn)
-  (write-line "    : list_box { key = \"z_conflicts\"; height = 5; width = 90; }" dcl-fn)
-  (write-line "    : row { : button { key = \"zoom_conflict\"; label = \"Pokaz miejsce\"; } }" dcl-fn)
-  (write-line "    : radio_row { key = \"z_conf_mode\";" dcl-fn)
-  (write-line "      : radio_button { key = \"keep\"; label = \"Zostaw Z obiektu\"; value = \"1\"; }" dcl-fn)
-  (write-line "      : radio_button { key = \"text\"; label = \"Nadpisz Z tekstem\"; }" dcl-fn)
-  (write-line "    }" dcl-fn)
-  (write-line "  }" dcl-fn)
 
   (if (> c-solids 0)  
     (progn (write-line "  : boxed_radio_row { label = \"Eksport Bryl SOLID\"; key = \"s_m\";" dcl-fn)   
@@ -342,14 +352,25 @@
   (write-line "  }" dcl-fn)
 
   (write-line "  : boxed_radio_row { label = \"Kolejnosc Kolumn\"; key = \"g_m\"; : radio_button { key = \"geo\"; label = \"Geodezja (N,E,H)\"; value=\"1\";} : radio_button { key = \"cad\"; label = \"CAD (E,N,H)\"; } }" dcl-fn)   
+  (write-line "  }" dcl-fn)
+  (write-line "  : boxed_column { label = \"Konflikty rzednych Z\";" dcl-fn)
+  (write-line "    : text { label = \"Obiekt ma wlasne Z i tekst Z obok albo kilka tekstow Z lezy przy jednym obiekcie.\"; }" dcl-fn)
+  (write-line "    : list_box { key = \"z_conflicts\"; height = 24; width = 72; }" dcl-fn)
+  (write-line "    : row { : button { key = \"zoom_conflict\"; label = \"Pokaz miejsce\"; } }" dcl-fn)
+  (write-line "    : radio_row { key = \"z_conf_mode\";" dcl-fn)
+  (write-line "      : radio_button { key = \"z_keep\"; label = \"Zostaw Z obiektu\"; value = \"1\"; }" dcl-fn)
+  (write-line "      : radio_button { key = \"z_text\"; label = \"Nadpisz Z tekstem\"; }" dcl-fn)
+  (write-line "    }" dcl-fn)
+  (write-line "  }" dcl-fn)
+  (write-line "  }" dcl-fn)
   (write-line "  ok_cancel; }" dcl-fn) (close dcl-fn)    
 
   (setq dcl-id (load_dialog dcl-file)) (new_dialog "Geo10" dcl-id)   
 
   (run-analysis 1.5)  
 
-  (action_tile "z_conflicts" "(setq conflict_index (atoi $value))")
-  (action_tile "zoom_conflict" "(if (not conflict_index) (setq conflict_index 0)) (if (and conflict-items (nth conflict_index conflict-items)) (progn (setq pt (car (nth conflict_index conflict-items))) (command \"_.ZOOM\" \"_C\" pt (max 5.0 (* 4.0 (atof (get_tile \"t_r\")))))))")
+  (action_tile "z_conflicts" "(setq conflict_index (atoi $value)) (if (= $reason 4) (if (and conflict-items (nth conflict_index conflict-items)) (progn (setq pt (car (nth conflict_index conflict-items))) (geocad-export-show-point pt))))")
+  (action_tile "zoom_conflict" "(if (not conflict_index) (setq conflict_index 0)) (if (and conflict-items (nth conflict_index conflict-items)) (progn (setq pt (car (nth conflict_index conflict-items))) (geocad-export-show-point pt)))")
   (action_tile "recalc" "(setq z_conflict_mode (get_tile \"z_conf_mode\")) (run-analysis (atof (get_tile \"t_r\")))")
   (action_tile "accept" "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\") export_format (get_tile \"out_fmt\") z_conflict_mode (get_tile \"z_conf_mode\")) (done_dialog 1)")
 
@@ -427,7 +448,7 @@
             (progn  
               ;; POBIERZ Z Z TEKSTU automatycznie tylko dla obiektow bez wlasnego Z.
               ;; Przy konflikcie obiekt Z vs tekst Z decyzja pochodzi z okna eksportu.
-              (if (and (= (nth 3 t-i) "Z") (or (not own-z) (= z_conflict_mode "text")) (< d-center m-z))
+              (if (and (= (nth 3 t-i) "Z") (or (not own-z) (= z_conflict_mode "z_text")) (< d-center m-z))
                   (progn
                     (setq t-val (geocad-text-radar-z-value (nth 2 t-i)))
                     (if t-val
