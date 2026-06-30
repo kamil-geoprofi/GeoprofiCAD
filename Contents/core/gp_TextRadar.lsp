@@ -18,24 +18,49 @@
   )
 )
 
-(defun geocad-text-radar-categorize (txt / norm-txt is-num has-sep)
+(defun geocad-text-radar-strict-z-text-p (txt / norm-txt len idx ch sep-pos digit-before digit-after ok)
+  ;; Rzedna z radaru musi byc czysta liczba dziesietna:
+  ;; 133.00 albo 142,00. Wymagamy kropki/przecinka i cyfr po obu stronach.
+  (setq norm-txt (vl-string-trim " \r\n\t" (if txt txt "")))
+  (setq len (strlen norm-txt))
+  (setq idx 1 sep-pos nil digit-before nil digit-after nil ok (> len 2))
+  (while (and ok (<= idx len))
+    (setq ch (substr norm-txt idx 1))
+    (cond
+      ((and (= idx 1) (member ch '("-" "+"))))
+      ((<= 48 (ascii ch) 57)
+        (if sep-pos
+          (setq digit-after T)
+          (setq digit-before T)
+        )
+      )
+      ((member ch '("." ","))
+        (if sep-pos
+          (setq ok nil)
+          (setq sep-pos idx)
+        )
+      )
+      (T
+        (setq ok nil)
+      )
+    )
+    (setq idx (1+ idx))
+  )
+  (and ok sep-pos digit-before digit-after)
+)
+
+(defun geocad-text-radar-categorize (txt / norm-txt is-num)
   ;; Zwraca:
   ;; - "Z"  dla tekstu wygladajacego jak rzedna,
   ;; - "ID" dla pozostalych opisow/numerow.
   (setq norm-txt
     (vl-string-trim
-      " mM\r\n\t"
+      " \r\n\t"
       (vl-string-translate "," "." (if txt txt ""))
     )
   )
   (setq is-num (distof norm-txt))
-  (setq has-sep
-    (or
-      (vl-string-search "." norm-txt)
-      (vl-string-search "," (if txt txt ""))
-    )
-  )
-  (if (and is-num has-sep) "Z" "ID")
+  (if (and is-num (geocad-text-radar-strict-z-text-p txt)) "Z" "ID")
 )
 
 
@@ -45,11 +70,14 @@
   ;; zeby eksport nie odczytywal Z innym algorytmem niz raport.
   (setq norm-txt
     (vl-string-trim
-      " mM\r\n\t"
+      " \r\n\t"
       (vl-string-translate "," "." (if txt txt ""))
     )
   )
-  (setq val (distof norm-txt))
+  (if (geocad-text-radar-strict-z-text-p txt)
+    (setq val (distof norm-txt))
+    (setq val nil)
+  )
   val
 )
 

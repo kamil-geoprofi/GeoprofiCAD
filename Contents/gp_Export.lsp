@@ -142,12 +142,39 @@
   )
 )
 
+(defun geocad-export-show-conflict (conflict / pt srcObj txtObj ss en)
+  ;; Podglad konfliktu: zaznacza obiekt pikiety i przypisany tekst,
+  ;; a potem przybliza do miejsca konfliktu.
+  (if conflict
+    (progn
+      (setq pt (car conflict))
+      (setq srcObj (nth 2 conflict))
+      (setq txtObj (nth 3 conflict))
+      (setq ss (ssadd))
+      (foreach obj (list srcObj txtObj)
+        (if obj
+          (progn
+            (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
+            (if (and (not (vl-catch-all-error-p en)) en (entget en))
+              (ssadd en ss)
+            )
+          )
+        )
+      )
+      (if (> (sslength ss) 0)
+        (sssetfirst nil ss)
+      )
+      (geocad-export-show-point pt)
+    )
+  )
+)
+
 
 ;; ==========================================  
 ;; --- GŁÓWNA KOMENDA EKSPORTU ---  
 ;; ==========================================  
 
-(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id z_offset z_offset_str export_format export-lines export-line z_conflict_mode conflict-items conflict_index geom-has-z own-z near-z-count nearest-z att)
+(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id z_offset z_offset_str export_format export-lines export-line z_conflict_mode conflict-items conflict_index geom-has-z own-z near-z-count nearest-z nearest-z-object att)
 
   (setq old-err *error* *error* geocad-exp-err f nil)   
 
@@ -175,7 +202,7 @@
          (progn  
            (setq t-val (vla-get-TextString obj) cat (categorize-text t-val))  
            (if (= cat "Z") (setq c-txt-z (1+ c-txt-z)) (setq c-txt-id (1+ c-txt-id)))  
-           (setq txt-list (cons (list (vlax-safearray->list minPt) (vlax-safearray->list maxPt) t-val cat) txt-list)))))   
+           (setq txt-list (cons (list (vlax-safearray->list minPt) (vlax-safearray->list maxPt) t-val cat obj) txt-list)))))
 
       ;; OKRĄG - do analizy trafia środek okręgu
       ((= type "AcDbCircle")
@@ -218,7 +245,7 @@
   (setq run-analysis (lambda (rad / z-hit id-hit conflict-hit has-z has-id p-idx desc)
     (setq z-hit 0 id-hit 0 conflict-hit 0 conflict-items '() p-idx 1)
     (foreach p unique-pts
-      (setq pt (car p) obj (cadr p) has-z nil has-id nil near-z-count 0 nearest-z nil)
+      (setq pt (car p) obj (cadr p) has-z nil has-id nil near-z-count 0 nearest-z nil nearest-z-object nil)
       (setq geom-has-z (and (caddr pt) (> (abs (caddr pt)) 0.001)))
       (setq own-z geom-has-z)
       (if (= (vla-get-ObjectName obj) "AcDbBlockReference")
@@ -239,7 +266,7 @@
                   (progn
                     (setq near-z-count (1+ near-z-count))
                     (if (or (not nearest-z) (< (cadr dists) (car nearest-z)))
-                      (setq nearest-z (list (cadr dists) t-val))
+                      (setq nearest-z (list (cadr dists) t-val) nearest-z-object (nth 4 t-i))
                     )
                   )
                 )
@@ -265,7 +292,7 @@
               " | tekstow=" (itoa near-z-count)
             )
           )
-          (setq conflict-items (append conflict-items (list (list pt desc))))
+          (setq conflict-items (append conflict-items (list (list pt desc obj nearest-z-object))))
         )
       )
       (setq p-idx (1+ p-idx))
@@ -369,8 +396,8 @@
 
   (run-analysis 1.5)  
 
-  (action_tile "z_conflicts" "(setq conflict_index (atoi $value)) (if (= $reason 4) (if (and conflict-items (nth conflict_index conflict-items)) (progn (setq pt (car (nth conflict_index conflict-items))) (geocad-export-show-point pt))))")
-  (action_tile "zoom_conflict" "(if (not conflict_index) (setq conflict_index 0)) (if (and conflict-items (nth conflict_index conflict-items)) (progn (setq pt (car (nth conflict_index conflict-items))) (geocad-export-show-point pt)))")
+  (action_tile "z_conflicts" "(setq conflict_index (atoi $value)) (if (= $reason 4) (if (and conflict-items (nth conflict_index conflict-items)) (geocad-export-show-conflict (nth conflict_index conflict-items))))")
+  (action_tile "zoom_conflict" "(if (not conflict_index) (setq conflict_index 0)) (if (and conflict-items (nth conflict_index conflict-items)) (geocad-export-show-conflict (nth conflict_index conflict-items)))")
   (action_tile "recalc" "(setq z_conflict_mode (get_tile \"z_conf_mode\")) (run-analysis (atof (get_tile \"t_r\")))")
   (action_tile "accept" "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\") export_format (get_tile \"out_fmt\") z_conflict_mode (get_tile \"z_conf_mode\")) (done_dialog 1)")
 
