@@ -2,16 +2,21 @@
 (load "gp_Core.lsp" "\nBLAD: Nie znaleziono pliku gp_Core.lsp!")
 
 ;; ======================================================
-;; USUWANIE PIKIET Z MULTI BEZ KASOWANIA WEZLOW BAZOWYCH
+;; GEOPROFICAD - USUWANIE PIKIET Z MULTI
+;; ======================================================
 ;;
 ;; Komendy:
 ;;   USUNPKT_MULTI
 ;;   GP_USUN_PKT_Z_MULTI
 ;;
 ;; Zasada:
-;;   - szuka pikiet/blokow Pikieta_Geo na wierzcholkach polilinii,
-;;   - usuwa tylko punkty posrednie,
-;;   - chroni poczatek, koniec oraz miejsca zmiany spadku/dlugosci segmentow.
+;;   - szuka pikiet/blokow Pikieta_Geo/POINT na wierzcholkach polilinii,
+;;   - usuwa punkty posrednie oraz punkty bazowe/wezlowa,
+;;   - nie chroni juz poczatku, konca ani miejsc zmiany spadku/dlugosci segmentow.
+;;
+;; Uwaga:
+;;   Kasowanie jest ograniczone do wierzcholkow wybranej polilinii MULTI.
+;;   Przy domyslnym filtrze warstwy kasuje tylko obiekty z warstwy <prefix>_PIKIETY.
 ;; ======================================================
 
 
@@ -25,30 +30,6 @@
 ;; T   = dopasowanie po XY oraz Z.
 (if (not (boundp '*gp-usunpktmulti-match-z*))
   (setq *gp-usunpktmulti-match-z* nil)
-)
-
-;; Chron wezly, gdzie zmienia sie spadek.
-(if (not (boundp '*gp-usunpktmulti-protect-slope-breaks*))
-  (setq *gp-usunpktmulti-protect-slope-breaks* T)
-)
-
-;; Tolerancja zmiany spadku.
-;; 0.0005 = 0.05%.
-;; Jezeli chroni za duzo punktow, zwieksz np. do 0.001.
-(if (not (boundp '*gp-usunpktmulti-slope-tolerance*))
-  (setq *gp-usunpktmulti-slope-tolerance* 0.0005)
-)
-
-;; Chron wezly, gdzie mocno zmienia sie dlugosc sasiednich odcinkow.
-(if (not (boundp '*gp-usunpktmulti-protect-length-breaks*))
-  (setq *gp-usunpktmulti-protect-length-breaks* T)
-)
-
-;; 0.35 = chroni punkt, jezeli sasiednie segmenty roznia sie o ponad 35%.
-;; Jezeli nadal kasuje wezly, zmniejsz np. do 0.20.
-;; Jezeli chroni za duzo wygenerowanych punktow, zwieksz np. do 0.50.
-(if (not (boundp '*gp-usunpktmulti-length-ratio-tolerance*))
-  (setq *gp-usunpktmulti-length-ratio-tolerance* 0.35)
 )
 
 
@@ -123,11 +104,17 @@
 )
 
 
-(defun gp-usunpktmulti-polyline-prefix (pline / layer)
+(defun gp-usunpktmulti-polyline-prefix (pline / layer suffix)
   (setq layer (cdr (assoc 8 (entget pline))))
+  (setq suffix
+    (if (boundp '*geocad-layer-suffix-polyline-multi*)
+      *geocad-layer-suffix-polyline-multi*
+      "_POLYLINES_FROM_MULTI"
+    )
+  )
 
   (if layer
-    (gp-usunpktmulti-strip-suffix layer "_POLYLINES_FROM_MULTI")
+    (gp-usunpktmulti-strip-suffix layer suffix)
     nil
   )
 )
@@ -177,104 +164,6 @@
   )
 
   (reverse vertices)
-)
-
-
-(defun gp-usunpktmulti-seg-slope (a b / len)
-  (setq len (gp-usunpktmulti-xy-distance a b))
-
-  (if (> len 0.0000001)
-    (/ (- (gp-usunpktmulti-z b) (gp-usunpktmulti-z a)) len)
-    nil
-  )
-)
-
-
-(defun gp-usunpktmulti-relative-length-diff (a b / avg)
-  (setq avg (/ (+ a b) 2.0))
-
-  (if (> avg 0.0000001)
-    (/ (abs (- a b)) avg)
-    0.0
-  )
-)
-
-
-(defun gp-usunpktmulti-protected-index-p (vertices idx / count prev cur next len-prev len-next slope-prev slope-next protected)
-  (setq protected nil)
-  (setq count (length vertices))
-
-  (cond
-    ;; Pierwszy i ostatni wierzcholek zawsze chroniony.
-    ((or (= idx 0) (= idx (1- count)))
-      (setq protected T)
-    )
-
-    (T
-      (setq prev (nth (1- idx) vertices))
-      (setq cur  (nth idx vertices))
-      (setq next (nth (1+ idx) vertices))
-
-      (setq len-prev (gp-usunpktmulti-xy-distance prev cur))
-      (setq len-next (gp-usunpktmulti-xy-distance cur next))
-
-      ;; Chronimy, jezeli sasiednie dlugosci mocno sie roznia.
-      ;; To lapie typowy wezel bazowy miedzy dwoma segmentami.
-      (if
-        (and
-          *gp-usunpktmulti-protect-length-breaks*
-          (>
-            (gp-usunpktmulti-relative-length-diff len-prev len-next)
-            *gp-usunpktmulti-length-ratio-tolerance*
-          )
-        )
-        (setq protected T)
-      )
-
-      ;; Chronimy, jezeli zmienia sie spadek przed i po punkcie.
-      ;; Punkty wygenerowane w jednym segmencie maja praktycznie ten sam spadek.
-      (if
-        (and
-          (not protected)
-          *gp-usunpktmulti-protect-slope-breaks*
-        )
-        (progn
-          (setq slope-prev (gp-usunpktmulti-seg-slope prev cur))
-          (setq slope-next (gp-usunpktmulti-seg-slope cur next))
-
-          (if
-            (and
-              slope-prev
-              slope-next
-              (>
-                (abs (- slope-prev slope-next))
-                *gp-usunpktmulti-slope-tolerance*
-              )
-            )
-            (setq protected T)
-          )
-        )
-      )
-    )
-  )
-
-  protected
-)
-
-
-(defun gp-usunpktmulti-protected-vertices (vertices / idx protected)
-  (setq idx 0)
-  (setq protected '())
-
-  (while (< idx (length vertices))
-    (if (gp-usunpktmulti-protected-index-p vertices idx)
-      (setq protected (cons (nth idx vertices) protected))
-    )
-
-    (setq idx (1+ idx))
-  )
-
-  (reverse protected)
 )
 
 
@@ -333,7 +222,7 @@
   (and
     (or
       (not target-layer)
-      (= (strcase lay) (strcase target-layer))
+      (and lay (= (strcase lay) (strcase target-layer)))
     )
 
     (or
@@ -343,7 +232,10 @@
         (= typ "INSERT")
         (progn
           (setq block-name (gp-usunpktmulti-effective-block-name ent))
-          (= (strcase block-name) (strcase *geocad-pikieta-block-name*))
+          (and
+            block-name
+            (= (strcase block-name) (strcase *geocad-pikieta-block-name*))
+          )
         )
       )
     )
@@ -373,14 +265,13 @@
     use-prefix-filter
     /
     poly-data poly-layer prefix target-layer
-    vertices protected filter ss i ent pt
-    deleted candidates matched protected-count delete-result
+    vertices filter ss i ent pt
+    deleted candidates matched delete-result
   )
 
   (setq deleted 0)
   (setq candidates 0)
   (setq matched 0)
-  (setq protected-count 0)
 
   (setq poly-data (entget pline))
   (setq poly-layer (cdr (assoc 8 poly-data)))
@@ -388,7 +279,7 @@
   (setq prefix (gp-usunpktmulti-polyline-prefix pline))
 
   (if (and use-prefix-filter prefix)
-    (setq target-layer (strcat prefix "_PIKIETY"))
+    (setq target-layer (geocad-layer-name prefix *geocad-layer-type-points*))
     (setq target-layer nil)
   )
 
@@ -411,8 +302,6 @@
   (if (not vertices)
     (prompt "\nNie udalo sie odczytac wierzcholkow polilinii.")
     (progn
-      (setq protected (gp-usunpktmulti-protected-vertices vertices))
-
       (prompt
         (strcat
           "\nWierzcholkow polilinii: "
@@ -420,12 +309,7 @@
         )
       )
 
-      (prompt
-        (strcat
-          "\nWierzcholkow chronionych: "
-          (itoa (length protected))
-        )
-      )
+      (prompt "\nTryb kasowania: usuwane sa rowniez punkty bazowe/wezlowa.")
 
       (setq filter (gp-usunpktmulti-build-filter target-layer))
       (setq ss (ssget "_X" filter))
@@ -461,28 +345,15 @@
                   (progn
                     (setq matched (1+ matched))
 
-                    ;; Jezeli pikieta lezy w punkcie chronionym,
-                    ;; nie kasujemy jej.
-                    (if
-                      (gp-usunpktmulti-any-match-p
-                        pt
-                        protected
-                        *gp-usunpktmulti-tolerance*
+                    (setq delete-result
+                      (vl-catch-all-apply
+                        'entdel
+                        (list ent)
                       )
-                      (setq protected-count (1+ protected-count))
+                    )
 
-                      (progn
-                        (setq delete-result
-                          (vl-catch-all-apply
-                            'entdel
-                            (list ent)
-                          )
-                        )
-
-                        (if (not (vl-catch-all-error-p delete-result))
-                          (setq deleted (1+ deleted))
-                        )
-                      )
+                    (if (not (vl-catch-all-error-p delete-result))
+                      (setq deleted (1+ deleted))
                     )
                   )
                 )
@@ -505,13 +376,6 @@
         (strcat
           "\nPikiet dopasowanych do wierzcholkow polilinii: "
           (itoa matched)
-        )
-      )
-
-      (prompt
-        (strcat
-          "\nPikiet pominietych jako wezly/wierzcholki chronione: "
-          (itoa protected-count)
         )
       )
     )
