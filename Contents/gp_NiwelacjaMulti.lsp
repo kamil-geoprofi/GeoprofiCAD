@@ -1831,6 +1831,236 @@
 )
 
 
+;; --- FUNKCJA POMOCNICZA: Sortowanie rekordow po pikietazu ---
+(defun geocad-multi-sort-records-by-L (records)
+  (vl-sort
+    records
+    '(lambda (a b)
+      (< (car a) (car b))
+    )
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Dopisanie tekstu ostrzezenia ---
+(defun geocad-multi-warning-append (warnings txt)
+  (if
+    (and
+      txt
+      (/= txt "")
+      (not (member txt warnings))
+    )
+    (append warnings (list txt))
+    warnings
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Spadek procentowy miedzy rekordami ---
+(defun geocad-multi-slope-percent-between (a b / dL dZ)
+  (if
+    (and
+      a
+      b
+      (numberp (car a))
+      (numberp (car b))
+      (numberp (cadr a))
+      (numberp (cadr b))
+    )
+    (progn
+      (setq dL (- (car b) (car a)))
+      (setq dZ (- (cadr b) (cadr a)))
+
+      (if (> (abs dL) 0.001)
+        (* (/ dZ dL) 100.0)
+        nil
+      )
+    )
+
+    nil
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Ostrzezenia dla pary bliskich rekordow ---
+(defun geocad-multi-warning-labels-for-pair
+  (
+    a b
+    /
+    warnings dL dZ gap-diff slope-percent
+    near-L-threshold z-diff-threshold slope-threshold gap-similar-threshold
+  )
+
+  (setq warnings '())
+  (setq near-L-threshold 0.10)
+  (setq z-diff-threshold 0.03)
+  (setq slope-threshold 20.0)
+  (setq gap-similar-threshold 0.005)
+
+  (if
+    (and
+      a
+      b
+      (numberp (car a))
+      (numberp (car b))
+      (numberp (cadr a))
+      (numberp (cadr b))
+    )
+    (progn
+      (setq dL (abs (- (car b) (car a))))
+      (setq dZ (abs (- (cadr b) (cadr a))))
+      (setq gap-diff
+        (abs
+          (-
+            (geocad-multi-record-gap a)
+            (geocad-multi-record-gap b)
+          )
+        )
+      )
+      (setq slope-percent (geocad-multi-slope-percent-between a b))
+
+      (if (<= dL near-L-threshold)
+        (setq warnings
+          (geocad-multi-warning-append
+            warnings
+            "bliskie L"
+          )
+        )
+      )
+
+      (if
+        (and
+          (<= dL near-L-threshold)
+          (>= dZ z-diff-threshold)
+        )
+        (setq warnings
+          (geocad-multi-warning-append
+            warnings
+            "rozne Z"
+          )
+        )
+      )
+
+      (if
+        (and
+          slope-percent
+          (>= (abs slope-percent) slope-threshold)
+        )
+        (setq warnings
+          (geocad-multi-warning-append
+            warnings
+            (strcat
+              "spadek "
+              (rtos slope-percent 2 1)
+              "%"
+            )
+          )
+        )
+      )
+
+      (if
+        (and
+          (<= dL near-L-threshold)
+          (<= gap-diff gap-similar-threshold)
+        )
+        (setq warnings
+          (geocad-multi-warning-append
+            warnings
+            "gap podobny"
+          )
+        )
+      )
+    )
+  )
+
+  warnings
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Laczenie ostrzezen w tekst ---
+(defun geocad-multi-warning-list-to-text (warnings / txt item)
+  (setq txt "")
+
+  (foreach item warnings
+    (setq txt
+      (strcat
+        txt
+        (if (= txt "") "" "; ")
+        item
+      )
+    )
+  )
+
+  (if (= txt "")
+    "-"
+    txt
+  )
+)
+
+
+;; --- FUNKCJA POMOCNICZA: Ostrzezenia dla rekordu wzgledem sasiadow po osi ---
+(defun geocad-multi-record-warning-label
+  (
+    rec axis-records
+    /
+    idx prev next warnings prev-slope next-slope delta-slope
+    slope-delta-threshold item
+  )
+
+  (setq warnings '())
+  (setq slope-delta-threshold 15.0)
+  (setq idx (vl-position rec axis-records))
+
+  (if idx
+    (progn
+      (if (> idx 0)
+        (setq prev (nth (1- idx) axis-records))
+      )
+
+      (if (< idx (1- (length axis-records)))
+        (setq next (nth (1+ idx) axis-records))
+      )
+
+      (foreach item (geocad-multi-warning-labels-for-pair prev rec)
+        (setq warnings (geocad-multi-warning-append warnings item))
+      )
+
+      (foreach item (geocad-multi-warning-labels-for-pair rec next)
+        (setq warnings (geocad-multi-warning-append warnings item))
+      )
+
+      (setq prev-slope (geocad-multi-slope-percent-between prev rec))
+      (setq next-slope (geocad-multi-slope-percent-between rec next))
+
+      (if
+        (and
+          prev-slope
+          next-slope
+        )
+        (progn
+          (setq delta-slope (abs (- next-slope prev-slope)))
+
+          (if (>= delta-slope slope-delta-threshold)
+            (setq warnings
+              (geocad-multi-warning-append
+                warnings
+                (strcat
+                  "skok spadku "
+                  (rtos delta-slope 2 1)
+                  " pp"
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  (geocad-multi-warning-list-to-text warnings)
+)
+
+
 ;; --- FUNKCJA POMOCNICZA: Teksty NR dla warstwy punktow ---
 (defun geocad-multi-collect-nr-text-items-for-point-layer (point-layer / prefix nr-layer)
   (setq prefix (geocad-managed-layer-prefix-from-name point-layer))
@@ -1919,8 +2149,9 @@
 
 
 ;; --- FUNKCJA POMOCNICZA: Etykieta rekordu w oknie statystyk ---
-(defun geocad-multi-point-stat-label (rec nr-items / name)
+(defun geocad-multi-point-stat-label (rec nr-items axis-records / name warning)
   (setq name (geocad-multi-resolve-record-name rec nr-items))
+  (setq warning (geocad-multi-record-warning-label rec axis-records))
 
   (strcat
     name
@@ -1930,6 +2161,8 @@
     (rtos (car rec) 2 3)
     " | Z: "
     (rtos (cadr rec) 2 3)
+    " | ostrz: "
+    warning
   )
 )
 
@@ -1991,7 +2224,7 @@
   (
     records layer
     /
-    layer-records sorted-records nr-items
+    layer-records sorted-records axis-records nr-items
     dcl-file dcl-fn dcl-id status
     selected-index selected-record
   )
@@ -2001,6 +2234,9 @@
   )
   (setq sorted-records
     (geocad-multi-sort-records-by-gap-desc layer-records)
+  )
+  (setq axis-records
+    (geocad-multi-sort-records-by-L layer-records)
   )
   (setq nr-items
     (geocad-multi-collect-nr-text-items-for-point-layer layer)
@@ -2014,7 +2250,7 @@
       (write-line "GeoMultiPointStats : dialog { label = \"NIWELACJA_MULTI - statystyka punktow\";" dcl-fn)
       (write-line "  : boxed_column { label = \"Punkty na wybranej warstwie\";" dcl-fn)
       (write-line "    : text { key = \"info\"; label = \" \"; }" dcl-fn)
-      (write-line "    : list_box { key = \"points\"; width = 105; height = 18; }" dcl-fn)
+      (write-line "    : list_box { key = \"points\"; width = 125; height = 18; }" dcl-fn)
       (write-line "  }" dcl-fn)
       (write-line "  : boxed_column { label = \"Sortowanie\";" dcl-fn)
       (write-line "    : text { label = \"Lista jest posortowana malejaco po odleglosci punktu od osi.\"; }" dcl-fn)
@@ -2046,7 +2282,7 @@
 
           (start_list "points")
           (foreach selected-record sorted-records
-            (add_list (geocad-multi-point-stat-label selected-record nr-items))
+            (add_list (geocad-multi-point-stat-label selected-record nr-items axis-records))
           )
           (end_list)
 
