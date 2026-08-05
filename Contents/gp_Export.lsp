@@ -83,41 +83,147 @@
           (setq res "Uklad 1965 (?)"))   
       res)))   
 
-(defun extract-v22 (obj mode-solid / res type start-p end-p i ent-data)   
-  (setq res '())   
-  (setq type (vla-get-ObjectName obj))   
-  (cond   
-    ((member type '("AcDbPoint" "AcDbBlockReference"))   
-     (setq res (list (vlax-safearray->list (vlax-variant-value (vla-get-InsertionPoint obj))))))   
+(defun extract-v22 (obj mode-solid / res type start-p end-p i ent-data ename)
+  (setq res '())
+  (setq type (vla-get-ObjectName obj))
 
-    ;; OKRĄG - eksportowany jest wyłącznie środek okręgu
+  (cond
+
+    ;; Natywny POINT AutoCAD.
+    ;; Wspolrzedne pobieramy z DXF 10 i przeliczamy do WCS.
+    ((= type "AcDbPoint")
+     (setq ename (vlax-vla-object->ename obj))
+     (setq ent-data (entget ename))
+     (setq res
+       (list
+         (trans
+           (cdr (assoc 10 ent-data))
+           ename
+           0
+         )
+       )
+     )
+    )
+
+    ;; Wstawienie bloku.
+    ((= type "AcDbBlockReference")
+     (setq res
+       (list
+         (vlax-safearray->list
+           (vlax-variant-value
+             (vla-get-InsertionPoint obj)
+           )
+         )
+       )
+     )
+    )
+
+    ;; OKRAG - eksportowany jest wylacznie srodek okregu
     ((= type "AcDbCircle")
-     (setq res (list (vlax-safearray->list (vlax-variant-value (vla-get-Center obj))))))
+     (setq res
+       (list
+         (vlax-safearray->list
+           (vlax-variant-value
+             (vla-get-Center obj)
+           )
+         )
+       )
+     )
+    )
 
-    ((member type '("AcDbLine" "AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline" "AcDbArc"))  
-     (cond  
-       ((= type "AcDbArc")   
-        (setq start-p (vlax-curve-getStartParam obj) end-p (vlax-curve-getEndParam obj))  
-        (setq res (list (vlax-curve-getPointAtParam obj start-p)   
-                        (vlax-curve-getPointAtParam obj (+ start-p (/ (- end-p start-p) 2.0)))   
-                        (vlax-curve-getPointAtParam obj end-p))))  
-       ((= type "AcDbLine")  
-        (setq res (list (vlax-curve-getStartPoint obj) (vlax-curve-getEndPoint obj))))  
-       (t   
-        (setq start-p (fix (vlax-curve-getStartParam obj)) end-p (fix (vlax-curve-getEndParam obj)))  
-        (setq i start-p)   
-        (while (<= i end-p) (setq res (cons (vlax-curve-getPointAtParam obj i) res)) (setq i (1+ i)))   
-        (setq res (reverse res)))))   
-    ((= type "AcDbSolid")   
-     (setq ent-data (entget (vlax-vla-object->ename obj)))   
-     (setq res (list (trans (cdr (assoc 10 ent-data)) (vlax-vla-object->ename obj) 0)))   
-     (if (/= mode-solid "1")   
-       (setq res (append res (list (trans (cdr (assoc 11 ent-data)) (vlax-vla-object->ename obj) 0)   
-                                   (trans (cdr (assoc 12 ent-data)) (vlax-vla-object->ename obj) 0)   
-                                   (trans (cdr (assoc 13 ent-data)) (vlax-vla-object->ename obj) 0))))))   
-  )   
-  res   
-)   
+    ((member type
+       '(
+         "AcDbLine"
+         "AcDbPolyline"
+         "AcDb2dPolyline"
+         "AcDb3dPolyline"
+         "AcDbArc"
+        )
+     )
+     (cond
+       ((= type "AcDbArc")
+        (setq start-p (vlax-curve-getStartParam obj))
+        (setq end-p (vlax-curve-getEndParam obj))
+        (setq res
+          (list
+            (vlax-curve-getPointAtParam obj start-p)
+            (vlax-curve-getPointAtParam
+              obj
+              (+ start-p (/ (- end-p start-p) 2.0))
+            )
+            (vlax-curve-getPointAtParam obj end-p)
+          )
+        )
+       )
+
+       ((= type "AcDbLine")
+        (setq res
+          (list
+            (vlax-curve-getStartPoint obj)
+            (vlax-curve-getEndPoint obj)
+          )
+        )
+       )
+
+       (T
+        (setq start-p
+          (fix
+            (vlax-curve-getStartParam obj)
+          )
+        )
+        (setq end-p
+          (fix
+            (vlax-curve-getEndParam obj)
+          )
+        )
+        (setq i start-p)
+
+        (while (<= i end-p)
+          (setq res
+            (cons
+              (vlax-curve-getPointAtParam obj i)
+              res
+            )
+          )
+          (setq i (1+ i))
+        )
+
+        (setq res (reverse res))
+       )
+     )
+    )
+
+    ((= type "AcDbSolid")
+     (setq ename (vlax-vla-object->ename obj))
+     (setq ent-data (entget ename))
+
+     (setq res
+       (list
+         (trans
+           (cdr (assoc 10 ent-data))
+           ename
+           0
+         )
+       )
+     )
+
+     (if (/= mode-solid "1")
+       (setq res
+         (append
+           res
+           (list
+             (trans (cdr (assoc 11 ent-data)) ename 0)
+             (trans (cdr (assoc 12 ent-data)) ename 0)
+             (trans (cdr (assoc 13 ent-data)) ename 0)
+           )
+         )
+       )
+     )
+    )
+  )
+
+  res
+) 
 
 (defun parse-tags (str)
   (geocad-parse-tags str)
