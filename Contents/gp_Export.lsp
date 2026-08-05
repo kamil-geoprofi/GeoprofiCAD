@@ -874,16 +874,16 @@
 )
 
 ;; ======================================================
-;; ULEPSZONE GLOBALNE DOPASOWANIE TEKSTOW 1:1
+;; SZYBKI LOKALNY RADAR TEKSTOW 1:1
 ;; ======================================================
 ;;
-;; Zasady:
-;; - tekst moze byc przypisany tylko raz w danej kategorii,
-;; - maksymalizujemy liczbe dopasowanych rekordow przez sciezki rozszerzajace,
-;; - INSERT i POINT maja pierwszenstwo przed geometria pomocnicza,
-;; - rekordy z mala liczba kandydatow sa rozwiazywane wczesniej,
-;; - remisy sa rozstrzygane deterministycznie przez RID i TID,
-;; - do wyniku trafia informacja o niejednoznacznosci dopasowania.
+;; Zasady wydajnosciowe:
+;; - kandydaci sa wyszukiwani lokalnie sweep-line po osi X,
+;; - przechowujemy maksymalnie kilka najlepszych tekstow na rekord,
+;; - najpierw obslugujemy rekordy z najmniejsza liczba kandydatow,
+;; - tekst moze zostac uzyty tylko raz w danej kategorii,
+;; - dopuszczamy najwyzej jedna lokalna zamiane przypisania,
+;; - brak rekurencji i brak lancuchow przepinania przez caly rysunek.
 ;;
 ;; Kandydat:
 ;; (score d-center d-edge rid tid text-item value)
@@ -891,6 +891,8 @@
 
 (setq *gp-exp-radar-ambiguity-absolute* 0.10)
 (setq *gp-exp-radar-ambiguity-ratio* 1.25)
+(setq *gp-exp-radar-max-candidates* 6)
+(setq *gp-exp-last-radar-candidate-map* nil)
 
 (defun gp-exp-map-set (map key value / pair)
   (setq pair (assoc key map))
@@ -915,7 +917,6 @@
 )
 
 (defun gp-exp-radar-candidate-score (d-center d-edge)
-  ;; Srodek tekstu jest wazniejszy niz sama krawedz bounding boxa.
   (+ (* 0.75 d-center) (* 0.25 d-edge))
 )
 
@@ -940,66 +941,39 @@
   )
 )
 
-(defun gp-exp-radar-record-key-less-p (a b / ap bp an bn as bs ar br)
-  ;; Klucz: (priorytet-typu liczba-kandydatow najlepszy-koszt rid)
-  (setq ap (nth 0 a)
-        bp (nth 0 b)
-        an (nth 1 a)
-        bn (nth 1 b)
+(defun gp-exp-radar-record-key-less-p (a b / an bn ap bp as bs ar br)
+  ;; Klucz: (liczba-kandydatow priorytet-typu najlepszy-koszt rid)
+  ;; Najpierw chronimy rekordy majace najmniej alternatyw.
+  (setq an (nth 0 a)
+        bn (nth 0 b)
+        ap (nth 1 a)
+        bp (nth 1 b)
         as (nth 2 a)
         bs (nth 2 b)
         ar (nth 3 a)
         br (nth 3 b))
 
   (cond
-    ((/= ap bp) (< ap bp))
     ((/= an bn) (< an bn))
+    ((/= ap bp) (< ap bp))
     ((not (equal as bs 1e-9)) (< as bs))
     (T (< ar br))
   )
 )
 
-(defun gp-exp-stable-sort (items predicate / indexes)
-  ;; vl-sort potrafi usuwac duplikaty. vl-sort-i zwraca indeksy,
-  ;; dlatego zachowuje wszystkich kandydatow i jest szybszy
-  ;; od rekurencyjnego sortowania przez wstawianie.
-  (if items
-    (progn
-      (setq indexes (vl-sort-i items predicate))
-      (mapcar
-        '(lambda (index) (nth index items))
-        indexes
-      )
-    )
-    '()
-  )
+(defun gp-exp-stable-sort (items predicate)
+  (if items (vl-sort items predicate) '())
 )
 
-(defun gp-exp-point-near-text-box-p (pt item radius / px py min-x max-x min-y max-y)
-  ;; Szybki test AABB przed kosztowniejszym liczeniem distance.
-  (setq px (car pt)
-        py (cadr pt)
-        min-x (min (caar item) (caadr item))
-        max-x (max (caar item) (caadr item))
-        min-y (min (cadar item) (cadadr item))
-        max-y (max (cadar item) (cadadr item)))
-
-  (and
-    (>= px (- min-x radius))
-    (<= px (+ max-x radius))
-    (>= py (- min-y radius))
-    (<= py (+ max-y radius))
+(defun gp-exp-take-first (items limit / result count)
+  (setq result '()
+        count 0)
+  (while (and items (< count limit))
+    (setq result (cons (car items) result)
+          items (cdr items)
+          count (1+ count))
   )
-)
-
-(defun gp-exp-radar-record-allowed-p (category base z-mode)
-  (if (= category "ID")
-    (not (cdr (assoc 'id base)))
-    (or
-      (= z-mode "z_text")
-      (not (cdr (assoc 'z base)))
-    )
-  )
+  (reverse result)
 )
 
 (defun gp-exp-radar-candidate-value (category item / value)
@@ -1009,17 +983,101 @@
       (gp-exp-trim (gp-exp-text-item-value item))
     )
   )
-
   (if
-    (and
-      value
-      (or
-        (= category "Z")
-        (gp-exp-nonempty-p value)
-      )
-    )
+    (and value (or (= category "Z") (gp-exp-nonempty-p value)))
     value
     nil
+  )
+)
+
+(defun gp-exp-prepare-radar-texts (texts category / result item value)
+  ;; Kategoria i wartosc sa obliczane tylko raz na przebieg.
+  (setq result '())
+  (foreach item texts
+    (if (= (nth 3 item) category)
+      (progn
+        (setq value (gp-exp-radar-candidate-value category item))
+        (if value
+          (setq result (cons (cons value item) result))
+        )
+      )
+    )
+  )
+  (reverse result)
+)
+
+(defun gp-exp-filter-texts-category (texts category / result item)
+  (setq result '())
+  (foreach item texts
+    (if (= (nth 3 item) category)
+      (setq result (cons item result))
+    )
+  )
+  (reverse result)
+)
+
+(defun gp-exp-point-near-text-box-p (pt item radius / px py min-x max-x min-y max-y)
+  (setq px (car pt)
+        py (cadr pt)
+        min-x (min (caar item) (caadr item))
+        max-x (max (caar item) (caadr item))
+        min-y (min (cadar item) (cadadr item))
+        max-y (max (cadar item) (cadadr item)))
+  (and
+    (>= px (- min-x radius))
+    (<= px (+ max-x radius))
+    (>= py (- min-y radius))
+    (<= py (+ max-y radius))
+  )
+)
+
+(defun gp-exp-near-text-info (pt items radius / count nearest nearest-center item dists)
+  ;; Wynik: (liczba najblizszy-item)
+  (setq count 0
+        nearest nil
+        nearest-center nil)
+  (foreach item items
+    (if (gp-exp-point-near-text-box-p pt item radius)
+      (progn
+        (setq dists (geocad-text-radar-distance pt item))
+        (if (<= (car dists) radius)
+          (progn
+            (setq count (1+ count))
+            (if
+              (or (not nearest-center) (< (cadr dists) nearest-center))
+              (setq nearest item
+                    nearest-center (cadr dists))
+            )
+          )
+        )
+      )
+    )
+  )
+  (list count nearest)
+)
+
+(defun gp-exp-radar-record-x-less-p (a b / ax bx ar br)
+  ;; Rekord pomocniczy: (x rid record)
+  (setq ax (nth 0 a)
+        bx (nth 0 b)
+        ar (nth 1 a)
+        br (nth 1 b))
+  (if (not (equal ax bx 1e-9)) (< ax bx) (< ar br))
+)
+
+(defun gp-exp-radar-text-x-less-p (a b / ax bx at bt)
+  ;; Tekst pomocniczy: (expanded-min-x expanded-max-x tid prepared-item)
+  (setq ax (nth 0 a)
+        bx (nth 0 b)
+        at (nth 2 a)
+        bt (nth 2 b))
+  (if (not (equal ax bx 1e-9)) (< ax bx) (< at bt))
+)
+
+(defun gp-exp-radar-record-allowed-p (category base z-mode)
+  (if (= category "ID")
+    (not (cdr (assoc 'id base)))
+    (or (= z-mode "z_text") (not (cdr (assoc 'z base))))
   )
 )
 
@@ -1027,53 +1085,83 @@
   (
     records texts radius category base-map z-mode
     /
-    result record rid pt base candidates item dists value
-    d-edge d-center score
+    result prepared record rid pt base
+    record-items record-entry
+    text-items text-entry prepared-item item value
+    min-x max-x px active new-active remaining
+    candidates dists d-edge d-center score sorted
   )
 
-  (setq result '())
+  ;; Sweep-line ogranicza porownania do tekstow lokalnych w osi X.
+  (setq result '()
+        prepared (gp-exp-prepare-radar-texts texts category)
+        record-items '()
+        text-items '())
 
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
           pt (gp-exp-record-get record 'pt)
-          base (gp-exp-map-get base-map rid)
+          base (gp-exp-map-get base-map rid))
+    (if (gp-exp-radar-record-allowed-p category base z-mode)
+      (setq record-items (cons (list (car pt) rid record) record-items))
+    )
+  )
+
+  (foreach prepared-item prepared
+    (setq item (cdr prepared-item)
+          min-x (- (min (caar item) (caadr item)) radius)
+          max-x (+ (max (caar item) (caadr item)) radius))
+    (setq text-items
+      (cons
+        (list min-x max-x (gp-exp-text-item-id item) prepared-item)
+        text-items
+      )
+    )
+  )
+
+  (setq record-items
+    (gp-exp-stable-sort record-items 'gp-exp-radar-record-x-less-p)
+        remaining
+    (gp-exp-stable-sort text-items 'gp-exp-radar-text-x-less-p)
+        active '())
+
+  (foreach record-entry record-items
+    (setq px (nth 0 record-entry)
+          rid (nth 1 record-entry)
+          record (nth 2 record-entry)
+          pt (gp-exp-record-get record 'pt)
           candidates '())
 
-    (if (gp-exp-radar-record-allowed-p category base z-mode)
-      (foreach item texts
-        (if
-          (and
-            (= (nth 3 item) category)
-            (gp-exp-point-near-text-box-p pt item radius)
-          )
-          (progn
-            (setq dists (geocad-text-radar-distance pt item)
-                  d-edge (car dists)
-                  d-center (cadr dists))
+    (while (and remaining (<= (nth 0 (car remaining)) px))
+      (setq active (cons (car remaining) active)
+            remaining (cdr remaining))
+    )
 
-            (if (<= d-edge radius)
-              (progn
-                (setq value (gp-exp-radar-candidate-value category item))
-                (if value
-                  (progn
-                    (setq score
-                      (gp-exp-radar-candidate-score d-center d-edge)
-                    )
-                    (setq candidates
-                      (cons
-                        (list
-                          score
-                          d-center
-                          d-edge
-                          rid
-                          (gp-exp-text-item-id item)
-                          item
-                          value
-                        )
-                        candidates
-                      )
-                    )
-                  )
+    (setq new-active '())
+    (foreach text-entry active
+      (if (>= (nth 1 text-entry) px)
+        (setq new-active (cons text-entry new-active))
+      )
+    )
+    (setq active new-active)
+
+    (foreach text-entry active
+      (setq prepared-item (nth 3 text-entry)
+            value (car prepared-item)
+            item (cdr prepared-item))
+      (if (gp-exp-point-near-text-box-p pt item radius)
+        (progn
+          (setq dists (geocad-text-radar-distance pt item)
+                d-edge (car dists)
+                d-center (cadr dists))
+          (if (<= d-edge radius)
+            (progn
+              (setq score (gp-exp-radar-candidate-score d-center d-edge))
+              (setq candidates
+                (cons
+                  (list score d-center d-edge rid
+                        (gp-exp-text-item-id item) item value)
+                  candidates
                 )
               )
             )
@@ -1083,42 +1171,33 @@
     )
 
     (if candidates
-      (setq result
-        (cons
-          (cons
-            rid
-            (gp-exp-stable-sort
-              candidates
-              'gp-exp-radar-candidate-less-p
-            )
-          )
-          result
-        )
+      (progn
+        (setq sorted
+          (gp-exp-stable-sort candidates 'gp-exp-radar-candidate-less-p))
+        (setq sorted
+          (gp-exp-take-first sorted *gp-exp-radar-max-candidates*))
+        (setq result (cons (cons rid sorted) result))
       )
     )
   )
-
   result
 )
 
 (defun gp-exp-build-radar-record-order
   (records candidate-map / keys record rid kind candidates best-score)
-
   (setq keys '())
-
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
           kind (gp-exp-record-get record 'kind)
           candidates (gp-exp-map-get candidate-map rid))
-
     (if candidates
       (progn
         (setq best-score (nth 0 (car candidates)))
         (setq keys
           (cons
             (list
-              (gp-exp-radar-kind-priority kind)
               (length candidates)
+              (gp-exp-radar-kind-priority kind)
               best-score
               rid
             )
@@ -1128,69 +1207,71 @@
       )
     )
   )
-
   (mapcar
     '(lambda (key) (nth 3 key))
     (gp-exp-stable-sort keys 'gp-exp-radar-record-key-less-p)
   )
 )
 
-(defun gp-exp-radar-augment
-  (
-    rid candidate-map rid-map tid-map visited-tids
-    /
-    candidates candidate tid owner state success
-  )
-
-  ;; Proba przypisania przez sciezke rozszerzajaca.
-  ;; Zajety tekst moze zostac zwolniony, gdy jego wlasciciel
-  ;; ma innego poprawnego kandydata.
-
-  (setq candidates (gp-exp-map-get candidate-map rid)
-        success nil)
-
-  (while (and candidates (not success))
+(defun gp-exp-radar-first-free-candidate
+  (candidates tid-map excluded-tid / candidate tid result)
+  (setq result nil)
+  (while (and candidates (not result))
     (setq candidate (car candidates)
           tid (nth 4 candidate))
+    (if
+      (and
+        (or (not excluded-tid) (/= tid excluded-tid))
+        (not (gp-exp-map-get tid-map tid))
+      )
+      (setq result candidate)
+    )
+    (setq candidates (cdr candidates))
+  )
+  result
+)
 
-    (if (not (member tid visited-tids))
-      (progn
-        (setq owner (gp-exp-map-get tid-map tid))
+(defun gp-exp-radar-assign-local
+  (rid candidate-map rid-map tid-map / candidates direct candidate tid owner owner-candidates alternative success)
 
-        (if (not owner)
-          (progn
-            (setq rid-map (gp-exp-map-set rid-map rid candidate)
-                  tid-map (gp-exp-map-set tid-map tid rid)
-                  success T)
-          )
+  ;; Najpierw wolny tekst. Gdy wszystkie sa zajete, probujemy tylko
+  ;; jednej zamiany: wlasciciel tekstu musi miec wolna alternatywe.
+  (setq candidates (gp-exp-map-get candidate-map rid)
+        direct (gp-exp-radar-first-free-candidate candidates tid-map nil)
+        success nil)
 
-          (progn
-            (setq state
-              (gp-exp-radar-augment
-                owner
-                candidate-map
-                rid-map
-                tid-map
-                (cons tid visited-tids)
-              )
-            )
+  (if direct
+    (progn
+      (setq tid (nth 4 direct)
+            rid-map (gp-exp-map-set rid-map rid direct)
+            tid-map (gp-exp-map-set tid-map tid rid)
+            success T)
+    )
+    (while (and candidates (not success))
+      (setq candidate (car candidates)
+            tid (nth 4 candidate)
+            owner (gp-exp-map-get tid-map tid))
 
-            (if (car state)
-              (progn
-                (setq rid-map (cadr state)
-                      tid-map (caddr state))
+      (if owner
+        (progn
+          (setq owner-candidates (gp-exp-map-get candidate-map owner)
+                alternative
+                  (gp-exp-radar-first-free-candidate
+                    owner-candidates tid-map tid))
 
-                (setq rid-map (gp-exp-map-set rid-map rid candidate)
-                      tid-map (gp-exp-map-set tid-map tid rid)
-                      success T)
-              )
+          (if alternative
+            (progn
+              (setq rid-map (gp-exp-map-set rid-map owner alternative)
+                    tid-map (gp-exp-map-set tid-map (nth 4 alternative) owner)
+                    rid-map (gp-exp-map-set rid-map rid candidate)
+                    tid-map (gp-exp-map-set tid-map tid rid)
+                    success T)
             )
           )
         )
       )
+      (setq candidates (cdr candidates))
     )
-
-    (setq candidates (cdr candidates))
   )
 
   (list success rid-map tid-map)
@@ -1210,7 +1291,6 @@
 
 (defun gp-exp-radar-match-ambiguous-p
   (assigned alternative / assigned-score alternative-score delta ratio lower higher)
-
   (if (not alternative)
     nil
     (progn
@@ -1219,18 +1299,12 @@
             delta (abs (- assigned-score alternative-score))
             lower (min assigned-score alternative-score)
             higher (max assigned-score alternative-score))
-
       (setq ratio
         (if (> lower 1e-9)
           (/ higher lower)
-          (if
-            (<= higher *gp-exp-radar-ambiguity-absolute*)
-            1.0
-            999999.0
-          )
+          (if (<= higher *gp-exp-radar-ambiguity-absolute*) 1.0 999999.0)
         )
       )
-
       (or
         (<= delta *gp-exp-radar-ambiguity-absolute*)
         (<= ratio *gp-exp-radar-ambiguity-ratio*)
@@ -1241,25 +1315,14 @@
 
 (defun gp-exp-radar-entry-from-candidate
   (candidate candidates / tid alternative ambiguous reassigned)
-
   (setq tid (nth 4 candidate)
-        alternative
-          (gp-exp-radar-first-other-candidate candidates tid)
-        ambiguous
-          (gp-exp-radar-match-ambiguous-p candidate alternative)
-        reassigned
-          (and
-            candidates
-            (/= tid (nth 4 (car candidates)))
-          )
-  )
-
+        alternative (gp-exp-radar-first-other-candidate candidates tid)
+        ambiguous (gp-exp-radar-match-ambiguous-p candidate alternative)
+        reassigned (and candidates (/= tid (nth 4 (car candidates)))))
   (list
     (cons 'value (nth 6 candidate))
     (cons 'source "RADAR")
-    (cons 'text-object
-      (gp-exp-text-item-object (nth 5 candidate))
-    )
+    (cons 'text-object (gp-exp-text-item-object (nth 5 candidate)))
     (cons 'text-id tid)
     (cons 'distance (nth 1 candidate))
     (cons 'edge-distance (nth 2 candidate))
@@ -1280,105 +1343,64 @@
 
   (setq candidate-map
     (gp-exp-build-radar-candidate-map
-      records
-      texts
-      radius
-      category
-      base-map
-      z-mode
-    )
-  )
+      records texts radius category base-map z-mode))
+  (setq *gp-exp-last-radar-candidate-map* candidate-map)
 
   (setq record-order
     (gp-exp-build-radar-record-order records candidate-map)
-  )
-
-  (setq rid-map '()
+        rid-map '()
         tid-map '())
 
-  ;; Maksymalna liczba dopasowan 1:1.
+  ;; Koszt jest ograniczony: brak rekurencji, najwyzej jedna zamiana.
   (foreach rid record-order
     (setq state
-      (gp-exp-radar-augment
-        rid
-        candidate-map
-        rid-map
-        tid-map
-        '()
-      )
-    )
-    (setq rid-map (cadr state)
+      (gp-exp-radar-assign-local rid candidate-map rid-map tid-map)
+          rid-map (cadr state)
           tid-map (caddr state))
   )
 
   (setq result '())
-
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
           candidate (gp-exp-map-get rid-map rid)
           candidates (gp-exp-map-get candidate-map rid))
-
     (if candidate
       (setq result
         (cons
-          (cons
-            rid
-            (gp-exp-radar-entry-from-candidate candidate candidates)
-          )
+          (cons rid (gp-exp-radar-entry-from-candidate candidate candidates))
           result
         )
       )
     )
   )
-
   result
 )
 
 (defun gp-exp-assign-radar-reusable
-  (
-    records texts radius category base-map z-mode
-    /
-    candidate-map result record rid candidates candidate
-  )
-
-  ;; Tryb zgodnosci: ten sam tekst moze zostac uzyty wielokrotnie.
-  ;; Nadal uzywamy tej samej funkcji kosztu i informacji o pewnosci.
-
+  (records texts radius category base-map z-mode / candidate-map result record rid candidates candidate)
   (setq candidate-map
     (gp-exp-build-radar-candidate-map
-      records
-      texts
-      radius
-      category
-      base-map
-      z-mode
-    )
-  )
-
-  (setq result '())
-
+      records texts radius category base-map z-mode))
+  (setq *gp-exp-last-radar-candidate-map* candidate-map
+        result '())
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
           candidates (gp-exp-map-get candidate-map rid))
-
     (if candidates
       (progn
         (setq candidate (car candidates))
         (setq result
           (cons
-            (cons
-              rid
-              (gp-exp-radar-entry-from-candidate candidate candidates)
-            )
+            (cons rid (gp-exp-radar-entry-from-candidate candidate candidates))
             result
           )
         )
       )
     )
   )
-
   result
 )
+
 
 ;; ======================================================
 ;; ROZWIAZANIE ID / Z I STATYSTYKI
@@ -1394,11 +1416,12 @@
     renum-all fix-dupes auto-prefix auto-start
     /
     base-map record rid base
-    radar-id-map radar-z-map
+    radar-id-map radar-z-map radar-z-candidate-map
     final-id-map final-z-map
     used-ids next-auto raw-id raw-source radar-entry
     raw-z z-source z-entry id-value
     conflicts conflict-count pt obj nearest-z
+    z-texts candidates near-info
   )
 
   ;; 1. Dane bazowe dla kazdego rekordu.
@@ -1414,24 +1437,28 @@
   )
 
   ;; 2. Radar ID i Z.
-  (if unique-texts
-    (progn
+  ;; Przy wymuszonej nowej numeracji nie budujemy w ogole grafu ID.
+  (if (= renum-all "1")
+    (setq radar-id-map '())
+    (if unique-texts
       (setq radar-id-map
         (gp-exp-assign-radar-unique records texts radius "ID" base-map z-mode)
       )
-      (setq radar-z-map
-        (gp-exp-assign-radar-unique records texts radius "Z" base-map z-mode)
-      )
-    )
-    (progn
       (setq radar-id-map
         (gp-exp-assign-radar-reusable records texts radius "ID" base-map z-mode)
       )
-      (setq radar-z-map
-        (gp-exp-assign-radar-reusable records texts radius "Z" base-map z-mode)
-      )
     )
   )
+
+  (if unique-texts
+    (setq radar-z-map
+      (gp-exp-assign-radar-unique records texts radius "Z" base-map z-mode)
+    )
+    (setq radar-z-map
+      (gp-exp-assign-radar-reusable records texts radius "Z" base-map z-mode)
+    )
+  )
+  (setq radar-z-candidate-map *gp-exp-last-radar-candidate-map*)
 
   ;; 3. Finalne ID: baza/radar -> auto -> naprawa duplikatow.
   (setq final-id-map '()
@@ -1592,14 +1619,33 @@
   )
 
   ;; 5. Konflikty Z do raportu.
-  (setq conflicts '())
+  ;; Dla rekordow bez wlasnego Z wykorzystujemy juz zbudowana liste
+  ;; kandydatow. Dodatkowy skan wykonujemy tylko dla obiektow z wlasnym Z
+  ;; w trybie z_keep, bo takie rekordy nie uczestnicza w grafie radaru Z.
+  (setq conflicts '()
+        z-texts (gp-exp-filter-texts-category texts "Z"))
+
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
           pt (gp-exp-record-get record 'pt)
           obj (gp-exp-record-get record 'obj)
           base (gp-exp-map-get base-map rid)
-          conflict-count (gp-exp-near-text-count pt texts radius "Z")
-          nearest-z (gp-exp-nearest-text pt texts radius "Z"))
+          candidates (gp-exp-map-get radar-z-candidate-map rid)
+          conflict-count 0
+          nearest-z nil)
+
+    (cond
+      (candidates
+       (setq conflict-count (length candidates)
+             nearest-z (nth 5 (car candidates)))
+      )
+
+      ((and (cdr (assoc 'z base)) (= z-mode "z_keep"))
+       (setq near-info (gp-exp-near-text-info pt z-texts radius)
+             conflict-count (car near-info)
+             nearest-z (cadr near-info))
+      )
+    )
 
     (if
       (and
@@ -1624,7 +1670,12 @@
               )
               " | najblizszy tekst="
               (gp-exp-text-item-value nearest-z)
-              " | tekstow Z=" (itoa conflict-count)
+              " | tekstow Z="
+              (if
+                (>= conflict-count *gp-exp-radar-max-candidates*)
+                (strcat ">=" (itoa *gp-exp-radar-max-candidates*))
+                (itoa conflict-count)
+              )
             )
             obj
             (gp-exp-text-item-object nearest-z)
@@ -1848,14 +1899,24 @@
 ;; DCL
 ;; ======================================================
 
-(defun gp-exp-write-type-toggle (file key label object-count point-count)
+(defun gp-exp-write-type-toggle (file key label object-count point-count / default-on)
+  ;; Domyslnie radar analizuje typowe pikiety: POINT i INSERT.
+  ;; Geometria liniowa moze tworzyc tysiace wierzcholkow, dlatego
+  ;; uzytkownik wlacza ja swiadomie po otwarciu dialogu.
+  (setq default-on
+    (and
+      (> point-count 0)
+      (member key '("use_point" "use_insert"))
+    )
+  )
+
   (write-line
     (strcat
       "      : toggle { key = \"" key "\"; label = \""
       label
       " | obiekty=" (itoa object-count)
       " punkty=" (itoa point-count)
-      "\"; value = \"" (if (> point-count 0) "1" "0") "\";"
+      "\"; value = \"" (if default-on "1" "0") "\";"
       (if (> point-count 0) "" " is_enabled = false;")
       " }"
     )
@@ -1896,6 +1957,7 @@
   (gp-exp-write-type-toggle file "use_solid" "SOLID"
     (gp-exp-count-get object-count "SOLID")
     (gp-exp-count-get point-count "SOLID"))
+  (write-line "        : text { label = \"Dla szybkosci LINE/POLYLINE/ARC/SOLID sa domyslnie wylaczone.\"; }" file)
   (write-line "      }" file)
 
   (write-line "      : boxed_column { label = \"Radar tekstow i bloki\";" file)
@@ -1908,8 +1970,8 @@
 
   (write-line "      : boxed_column { label = \"Duplikaty i numeracja\";" file)
   (write-line "        : radio_row { key = \"d_m\";" file)
-  (write-line "          : radio_button { key = \"rem\"; label = \"Usun duplikaty XY\"; value = \"1\"; }" file)
-  (write-line "          : radio_button { key = \"keep\"; label = \"Zostaw wszystkie\"; }" file)
+  (write-line "          : radio_button { key = \"rem\"; label = \"Usun duplikaty XY\"; }" file)
+  (write-line "          : radio_button { key = \"keep\"; label = \"Zostaw wszystkie\"; value = \"1\"; }" file)
   (write-line "        }" file)
   (write-line "        : edit_box { key = \"d_tol\"; label = \"Tolerancja XY [m]:\"; edit_width = 8; value = \"0.01\"; }" file)
   (write-line "        : toggle { key = \"renum_all\"; label = \"Nowa numeracja wszystkich\"; value = \"0\"; }" file)
@@ -1957,7 +2019,7 @@
   (write-line "        : list_box { key = \"type_stats\"; width = 116; height = 15; }" file)
   (write-line "        : text { key = \"summary\"; value = \"...\"; width = 116; }" file)
   (write-line "        : text { key = \"sys_info\"; value = \"...\"; width = 116; }" file)
-  (write-line "        : button { key = \"recalc\"; label = \"Odswiez raport\"; }" file)
+  (write-line "        : button { key = \"recalc\"; label = \"Analizuj / odswiez raport\"; }" file)
   (write-line "      }" file)
 
   (write-line "      : boxed_column { label = \"Konflikty Z\";" file)
@@ -2189,7 +2251,7 @@
     /
     old-err f dcl-id dcl-file
     ss collected all-records texts object-count point-count
-    run-analysis options resolution conflict-items conflict-index
+    run-analysis options last-options resolution conflict-items conflict-index
     status filename output-lines output-count systems
   )
 
@@ -2215,7 +2277,7 @@
       (princ)
     )
     (progn
-      (princ "\nAnaliza geometrii i tekstow...")
+      (princ "\nPrzygotowanie zaznaczonych obiektow...")
 
       (setq collected (gp-exp-collect-selection ss)
             all-records (nth 0 collected)
@@ -2245,6 +2307,7 @@
               (setq resolution
                 (gp-exp-update-report-ui current-resolution)
               )
+              (setq last-options current-options)
               (setq conflict-items
                 (cdr (assoc 'conflicts resolution))
               )
@@ -2252,7 +2315,21 @@
             )
           )
 
-          (run-analysis)
+          ;; Dialog ma najpierw wejsc w aktywna petle zdarzen.
+          ;; Pelna analiza jest uruchamiana dopiero przez przycisk raportu
+          ;; albo po zatwierdzeniu ustawien.
+          (setq resolution nil
+                last-options nil
+                conflict-items nil)
+
+          (start_list "type_stats")
+          (add_list "Kliknij Analizuj / odswiez raport.")
+          (end_list)
+          (set_tile "summary" "Radar nie zostal jeszcze uruchomiony.")
+          (set_tile "sys_info" "Wybierz typy i ustawienia, potem uruchom analize.")
+          (start_list "z_conflicts")
+          (add_list "Brak analizy.")
+          (end_list)
 
           (action_tile
             "recalc"
@@ -2282,10 +2359,12 @@
 
           (if (= status 1)
             (progn
-              ;; Analiza finalna jest wykonywana jeszcze raz na zaakceptowanych
-              ;; ustawieniach, wiec wynik nie zalezy od klikniecia Odswiez.
-              (setq resolution
-                (gp-exp-run-resolution all-records texts options)
+              ;; Gdy ustawienia nie zmienily sie od ostatniego raportu,
+              ;; wykorzystujemy gotowy wynik zamiast ponownie liczyc radar.
+              (if (or (not resolution) (not (equal options last-options)))
+                (setq resolution
+                  (gp-exp-run-resolution all-records texts options)
+                )
               )
 
               (if (= (length (cdr (assoc 'records resolution))) 0)
