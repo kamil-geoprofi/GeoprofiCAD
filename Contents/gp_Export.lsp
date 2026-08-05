@@ -874,54 +874,206 @@
 )
 
 ;; ======================================================
-;; GLOBALNE DOPASOWANIE TEKSTOW 1:1
+;; ULEPSZONE GLOBALNE DOPASOWANIE TEKSTOW 1:1
+;; ======================================================
+;;
+;; Zasady:
+;; - tekst moze byc przypisany tylko raz w danej kategorii,
+;; - maksymalizujemy liczbe dopasowanych rekordow przez sciezki rozszerzajace,
+;; - INSERT i POINT maja pierwszenstwo przed geometria pomocnicza,
+;; - rekordy z mala liczba kandydatow sa rozwiazywane wczesniej,
+;; - remisy sa rozstrzygane deterministycznie przez RID i TID,
+;; - do wyniku trafia informacja o niejednoznacznosci dopasowania.
+;;
+;; Kandydat:
+;; (score d-center d-edge rid tid text-item value)
 ;; ======================================================
 
-(defun gp-exp-candidate-less-p (a b)
-  ;; Kandydat:
-  ;; (d-center d-edge rid tid item)
-  (if (= (car a) (car b))
-    (< (cadr a) (cadr b))
-    (< (car a) (car b))
+(setq *gp-exp-radar-ambiguity-absolute* 0.10)
+(setq *gp-exp-radar-ambiguity-ratio* 1.25)
+
+(defun gp-exp-map-set (map key value / pair)
+  (setq pair (assoc key map))
+  (if pair
+    (subst (cons key value) pair map)
+    (cons (cons key value) map)
   )
 )
 
-(defun gp-exp-build-radar-candidates
-  (records texts radius category base-map z-mode / result record rid pt base item dists allow)
+(defun gp-exp-radar-kind-priority (kind)
+  ;; Mniejsza liczba oznacza wyzszy priorytet.
+  (cond
+    ((= kind "INSERT") 0)
+    ((= kind "POINT") 1)
+    ((= kind "CIRCLE") 2)
+    ((= kind "SOLID") 3)
+    ((= kind "LINE") 4)
+    ((= kind "POLYLINE") 4)
+    ((= kind "ARC") 4)
+    (T 9)
+  )
+)
+
+(defun gp-exp-radar-candidate-score (d-center d-edge)
+  ;; Srodek tekstu jest wazniejszy niz sama krawedz bounding boxa.
+  (+ (* 0.75 d-center) (* 0.25 d-edge))
+)
+
+(defun gp-exp-radar-candidate-less-p (a b / as bs ac bc ae be ar br at bt)
+  (setq as (nth 0 a)
+        bs (nth 0 b)
+        ac (nth 1 a)
+        bc (nth 1 b)
+        ae (nth 2 a)
+        be (nth 2 b)
+        ar (nth 3 a)
+        br (nth 3 b)
+        at (nth 4 a)
+        bt (nth 4 b))
+
+  (cond
+    ((not (equal as bs 1e-9)) (< as bs))
+    ((not (equal ac bc 1e-9)) (< ac bc))
+    ((not (equal ae be 1e-9)) (< ae be))
+    ((/= ar br) (< ar br))
+    (T (< at bt))
+  )
+)
+
+(defun gp-exp-radar-record-key-less-p (a b / ap bp an bn as bs ar br)
+  ;; Klucz: (priorytet-typu liczba-kandydatow najlepszy-koszt rid)
+  (setq ap (nth 0 a)
+        bp (nth 0 b)
+        an (nth 1 a)
+        bn (nth 1 b)
+        as (nth 2 a)
+        bs (nth 2 b)
+        ar (nth 3 a)
+        br (nth 3 b))
+
+  (cond
+    ((/= ap bp) (< ap bp))
+    ((/= an bn) (< an bn))
+    ((not (equal as bs 1e-9)) (< as bs))
+    (T (< ar br))
+  )
+)
+
+(defun gp-exp-stable-sort (items predicate / indexes)
+  ;; vl-sort potrafi usuwac duplikaty. vl-sort-i zwraca indeksy,
+  ;; dlatego zachowuje wszystkich kandydatow i jest szybszy
+  ;; od rekurencyjnego sortowania przez wstawianie.
+  (if items
+    (progn
+      (setq indexes (vl-sort-i items predicate))
+      (mapcar
+        '(lambda (index) (nth index items))
+        indexes
+      )
+    )
+    '()
+  )
+)
+
+(defun gp-exp-point-near-text-box-p (pt item radius / px py min-x max-x min-y max-y)
+  ;; Szybki test AABB przed kosztowniejszym liczeniem distance.
+  (setq px (car pt)
+        py (cadr pt)
+        min-x (min (caar item) (caadr item))
+        max-x (max (caar item) (caadr item))
+        min-y (min (cadar item) (cadadr item))
+        max-y (max (cadar item) (cadadr item)))
+
+  (and
+    (>= px (- min-x radius))
+    (<= px (+ max-x radius))
+    (>= py (- min-y radius))
+    (<= py (+ max-y radius))
+  )
+)
+
+(defun gp-exp-radar-record-allowed-p (category base z-mode)
+  (if (= category "ID")
+    (not (cdr (assoc 'id base)))
+    (or
+      (= z-mode "z_text")
+      (not (cdr (assoc 'z base)))
+    )
+  )
+)
+
+(defun gp-exp-radar-candidate-value (category item / value)
+  (setq value
+    (if (= category "Z")
+      (gp-exp-parse-number (gp-exp-text-item-value item))
+      (gp-exp-trim (gp-exp-text-item-value item))
+    )
+  )
+
+  (if
+    (and
+      value
+      (or
+        (= category "Z")
+        (gp-exp-nonempty-p value)
+      )
+    )
+    value
+    nil
+  )
+)
+
+(defun gp-exp-build-radar-candidate-map
+  (
+    records texts radius category base-map z-mode
+    /
+    result record rid pt base candidates item dists value
+    d-edge d-center score
+  )
+
   (setq result '())
 
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
           pt (gp-exp-record-get record 'pt)
           base (gp-exp-map-get base-map rid)
-          allow nil)
+          candidates '())
 
-    (if (= category "ID")
-      (setq allow (not (cdr (assoc 'id base))))
-      (setq allow
-        (or
-          (= z-mode "z_text")
-          (not (cdr (assoc 'z base)))
-        )
-      )
-    )
-
-    (if allow
+    (if (gp-exp-radar-record-allowed-p category base z-mode)
       (foreach item texts
-        (if (= (nth 3 item) category)
+        (if
+          (and
+            (= (nth 3 item) category)
+            (gp-exp-point-near-text-box-p pt item radius)
+          )
           (progn
-            (setq dists (geocad-text-radar-distance pt item))
-            (if (<= (car dists) radius)
-              (setq result
-                (cons
-                  (list
-                    (cadr dists)
-                    (car dists)
-                    rid
-                    (gp-exp-text-item-id item)
-                    item
+            (setq dists (geocad-text-radar-distance pt item)
+                  d-edge (car dists)
+                  d-center (cadr dists))
+
+            (if (<= d-edge radius)
+              (progn
+                (setq value (gp-exp-radar-candidate-value category item))
+                (if value
+                  (progn
+                    (setq score
+                      (gp-exp-radar-candidate-score d-center d-edge)
+                    )
+                    (setq candidates
+                      (cons
+                        (list
+                          score
+                          d-center
+                          d-edge
+                          rid
+                          (gp-exp-text-item-id item)
+                          item
+                          value
+                        )
+                        candidates
+                      )
+                    )
                   )
-                  result
                 )
               )
             )
@@ -929,104 +1081,302 @@
         )
       )
     )
+
+    (if candidates
+      (setq result
+        (cons
+          (cons
+            rid
+            (gp-exp-stable-sort
+              candidates
+              'gp-exp-radar-candidate-less-p
+            )
+          )
+          result
+        )
+      )
+    )
   )
 
-  (vl-sort result 'gp-exp-candidate-less-p)
+  result
 )
 
-(defun gp-exp-assign-radar-unique
-  (records texts radius category base-map z-mode / candidates assigned-rids used-tids result candidate rid tid item value)
-  (setq candidates
-    (gp-exp-build-radar-candidates records texts radius category base-map z-mode)
-  )
-  (setq assigned-rids '()
-        used-tids '()
-        result '())
+(defun gp-exp-build-radar-record-order
+  (records candidate-map / keys record rid kind candidates best-score)
 
-  (foreach candidate candidates
-    (setq rid (nth 2 candidate)
-          tid (nth 3 candidate)
-          item (nth 4 candidate))
+  (setq keys '())
 
-    (if
-      (and
-        (not (member rid assigned-rids))
-        (not (member tid used-tids))
-      )
+  (foreach record records
+    (setq rid (gp-exp-record-get record 'rid)
+          kind (gp-exp-record-get record 'kind)
+          candidates (gp-exp-map-get candidate-map rid))
+
+    (if candidates
       (progn
-        (setq value
-          (if (= category "Z")
-            (gp-exp-parse-number (gp-exp-text-item-value item))
-            (gp-exp-trim (gp-exp-text-item-value item))
-          )
-        )
-
-        (if value
-          (progn
-            (setq result
-              (cons
-                (cons rid
-                  (list
-                    (cons 'value value)
-                    (cons 'source "RADAR")
-                    (cons 'text-object (gp-exp-text-item-object item))
-                  )
-                )
-                result
-              )
+        (setq best-score (nth 0 (car candidates)))
+        (setq keys
+          (cons
+            (list
+              (gp-exp-radar-kind-priority kind)
+              (length candidates)
+              best-score
+              rid
             )
-            (setq assigned-rids (cons rid assigned-rids)
-                  used-tids (cons tid used-tids))
+            keys
           )
         )
       )
     )
+  )
+
+  (mapcar
+    '(lambda (key) (nth 3 key))
+    (gp-exp-stable-sort keys 'gp-exp-radar-record-key-less-p)
+  )
+)
+
+(defun gp-exp-radar-augment
+  (
+    rid candidate-map rid-map tid-map visited-tids
+    /
+    candidates candidate tid owner state success
+  )
+
+  ;; Proba przypisania przez sciezke rozszerzajaca.
+  ;; Zajety tekst moze zostac zwolniony, gdy jego wlasciciel
+  ;; ma innego poprawnego kandydata.
+
+  (setq candidates (gp-exp-map-get candidate-map rid)
+        success nil)
+
+  (while (and candidates (not success))
+    (setq candidate (car candidates)
+          tid (nth 4 candidate))
+
+    (if (not (member tid visited-tids))
+      (progn
+        (setq owner (gp-exp-map-get tid-map tid))
+
+        (if (not owner)
+          (progn
+            (setq rid-map (gp-exp-map-set rid-map rid candidate)
+                  tid-map (gp-exp-map-set tid-map tid rid)
+                  success T)
+          )
+
+          (progn
+            (setq state
+              (gp-exp-radar-augment
+                owner
+                candidate-map
+                rid-map
+                tid-map
+                (cons tid visited-tids)
+              )
+            )
+
+            (if (car state)
+              (progn
+                (setq rid-map (cadr state)
+                      tid-map (caddr state))
+
+                (setq rid-map (gp-exp-map-set rid-map rid candidate)
+                      tid-map (gp-exp-map-set tid-map tid rid)
+                      success T)
+              )
+            )
+          )
+        )
+      )
+    )
+
+    (setq candidates (cdr candidates))
+  )
+
+  (list success rid-map tid-map)
+)
+
+(defun gp-exp-radar-first-other-candidate (candidates assigned-tid / candidate result)
+  (setq result nil)
+  (while (and candidates (not result))
+    (setq candidate (car candidates))
+    (if (/= (nth 4 candidate) assigned-tid)
+      (setq result candidate)
+    )
+    (setq candidates (cdr candidates))
   )
   result
 )
 
-(defun gp-exp-assign-radar-reusable
-  (records texts radius category base-map z-mode / result record rid pt base item value)
+(defun gp-exp-radar-match-ambiguous-p
+  (assigned alternative / assigned-score alternative-score delta ratio lower higher)
+
+  (if (not alternative)
+    nil
+    (progn
+      (setq assigned-score (nth 0 assigned)
+            alternative-score (nth 0 alternative)
+            delta (abs (- assigned-score alternative-score))
+            lower (min assigned-score alternative-score)
+            higher (max assigned-score alternative-score))
+
+      (setq ratio
+        (if (> lower 1e-9)
+          (/ higher lower)
+          (if
+            (<= higher *gp-exp-radar-ambiguity-absolute*)
+            1.0
+            999999.0
+          )
+        )
+      )
+
+      (or
+        (<= delta *gp-exp-radar-ambiguity-absolute*)
+        (<= ratio *gp-exp-radar-ambiguity-ratio*)
+      )
+    )
+  )
+)
+
+(defun gp-exp-radar-entry-from-candidate
+  (candidate candidates / tid alternative ambiguous reassigned)
+
+  (setq tid (nth 4 candidate)
+        alternative
+          (gp-exp-radar-first-other-candidate candidates tid)
+        ambiguous
+          (gp-exp-radar-match-ambiguous-p candidate alternative)
+        reassigned
+          (and
+            candidates
+            (/= tid (nth 4 (car candidates)))
+          )
+  )
+
+  (list
+    (cons 'value (nth 6 candidate))
+    (cons 'source "RADAR")
+    (cons 'text-object
+      (gp-exp-text-item-object (nth 5 candidate))
+    )
+    (cons 'text-id tid)
+    (cons 'distance (nth 1 candidate))
+    (cons 'edge-distance (nth 2 candidate))
+    (cons 'match-score (nth 0 candidate))
+    (cons 'candidate-count (length candidates))
+    (cons 'ambiguous ambiguous)
+    (cons 'reassigned reassigned)
+  )
+)
+
+(defun gp-exp-assign-radar-unique
+  (
+    records texts radius category base-map z-mode
+    /
+    candidate-map record-order rid-map tid-map state rid
+    result record candidate candidates
+  )
+
+  (setq candidate-map
+    (gp-exp-build-radar-candidate-map
+      records
+      texts
+      radius
+      category
+      base-map
+      z-mode
+    )
+  )
+
+  (setq record-order
+    (gp-exp-build-radar-record-order records candidate-map)
+  )
+
+  (setq rid-map '()
+        tid-map '())
+
+  ;; Maksymalna liczba dopasowan 1:1.
+  (foreach rid record-order
+    (setq state
+      (gp-exp-radar-augment
+        rid
+        candidate-map
+        rid-map
+        tid-map
+        '()
+      )
+    )
+    (setq rid-map (cadr state)
+          tid-map (caddr state))
+  )
+
   (setq result '())
+
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
-          pt (gp-exp-record-get record 'pt)
-          base (gp-exp-map-get base-map rid))
+          candidate (gp-exp-map-get rid-map rid)
+          candidates (gp-exp-map-get candidate-map rid))
 
-    (if
-      (if (= category "ID")
-        (not (cdr (assoc 'id base)))
-        (or (= z-mode "z_text") (not (cdr (assoc 'z base))))
+    (if candidate
+      (setq result
+        (cons
+          (cons
+            rid
+            (gp-exp-radar-entry-from-candidate candidate candidates)
+          )
+          result
+        )
       )
+    )
+  )
+
+  result
+)
+
+(defun gp-exp-assign-radar-reusable
+  (
+    records texts radius category base-map z-mode
+    /
+    candidate-map result record rid candidates candidate
+  )
+
+  ;; Tryb zgodnosci: ten sam tekst moze zostac uzyty wielokrotnie.
+  ;; Nadal uzywamy tej samej funkcji kosztu i informacji o pewnosci.
+
+  (setq candidate-map
+    (gp-exp-build-radar-candidate-map
+      records
+      texts
+      radius
+      category
+      base-map
+      z-mode
+    )
+  )
+
+  (setq result '())
+
+  (foreach record records
+    (setq rid (gp-exp-record-get record 'rid)
+          candidates (gp-exp-map-get candidate-map rid))
+
+    (if candidates
       (progn
-        (setq item (gp-exp-nearest-text pt texts radius category))
-        (if item
-          (progn
-            (setq value
-              (if (= category "Z")
-                (gp-exp-parse-number (gp-exp-text-item-value item))
-                (gp-exp-trim (gp-exp-text-item-value item))
-              )
+        (setq candidate (car candidates))
+        (setq result
+          (cons
+            (cons
+              rid
+              (gp-exp-radar-entry-from-candidate candidate candidates)
             )
-            (if value
-              (setq result
-                (cons
-                  (cons rid
-                    (list
-                      (cons 'value value)
-                      (cons 'source "RADAR")
-                      (cons 'text-object (gp-exp-text-item-object item))
-                    )
-                  )
-                  result
-                )
-              )
-            )
+            result
           )
         )
       )
     )
   )
+
   result
 )
 
@@ -1134,7 +1484,34 @@
             (cons 'value raw-id)
             (cons 'source raw-source)
             (cons 'text-object
-              (if radar-entry (cdr (assoc 'text-object radar-entry)) nil)
+              (if (= raw-source "RADAR")
+                (cdr (assoc 'text-object radar-entry))
+                nil
+              )
+            )
+            (cons 'ambiguous
+              (if (= raw-source "RADAR")
+                (cdr (assoc 'ambiguous radar-entry))
+                nil
+              )
+            )
+            (cons 'reassigned
+              (if (= raw-source "RADAR")
+                (cdr (assoc 'reassigned radar-entry))
+                nil
+              )
+            )
+            (cons 'candidate-count
+              (if (= raw-source "RADAR")
+                (cdr (assoc 'candidate-count radar-entry))
+                0
+              )
+            )
+            (cons 'match-score
+              (if (= raw-source "RADAR")
+                (cdr (assoc 'match-score radar-entry))
+                nil
+              )
             )
           )
         )
@@ -1178,7 +1555,34 @@
             (cons 'value raw-z)
             (cons 'source z-source)
             (cons 'text-object
-              (if z-entry (cdr (assoc 'text-object z-entry)) nil)
+              (if (= z-source "RADAR")
+                (cdr (assoc 'text-object z-entry))
+                nil
+              )
+            )
+            (cons 'ambiguous
+              (if (= z-source "RADAR")
+                (cdr (assoc 'ambiguous z-entry))
+                nil
+              )
+            )
+            (cons 'reassigned
+              (if (= z-source "RADAR")
+                (cdr (assoc 'reassigned z-entry))
+                nil
+              )
+            )
+            (cons 'candidate-count
+              (if (= z-source "RADAR")
+                (cdr (assoc 'candidate-count z-entry))
+                0
+              )
+            )
+            (cons 'match-score
+              (if (= z-source "RADAR")
+                (cdr (assoc 'match-score z-entry))
+                nil
+              )
             )
           )
         )
@@ -1282,7 +1686,34 @@
   (length handles)
 )
 
-(defun gp-exp-stat-line (records id-map z-map kind / obj-count point-count ia ib ir iauto za zb zg zr zz)
+(defun gp-exp-count-ambiguous-for-kind (records map kind / count record rid entry)
+  (setq count 0)
+  (foreach record records
+    (if (= (gp-exp-record-get record 'kind) kind)
+      (progn
+        (setq rid (gp-exp-record-get record 'rid)
+              entry (gp-exp-map-get map rid))
+        (if (and entry (cdr (assoc 'ambiguous entry)))
+          (setq count (1+ count))
+        )
+      )
+    )
+  )
+  count
+)
+
+(defun gp-exp-count-ambiguous-total (map / count pair entry)
+  (setq count 0)
+  (foreach pair map
+    (setq entry (cdr pair))
+    (if (and entry (cdr (assoc 'ambiguous entry)))
+      (setq count (1+ count))
+    )
+  )
+  count
+)
+
+(defun gp-exp-stat-line (records id-map z-map kind / obj-count point-count ia ib ir iauto za zb zg zr zz amb-id amb-z)
   (setq obj-count (gp-exp-object-count-kind records kind)
         point-count (gp-exp-record-count-kind records kind)
 
@@ -1296,6 +1727,9 @@
         zg (gp-exp-count-source-for-kind records z-map kind "GEOM")
         zr (gp-exp-count-source-for-kind records z-map kind "RADAR")
         zz (gp-exp-count-source-for-kind records z-map kind "ZERO")
+
+        amb-id (gp-exp-count-ambiguous-for-kind records id-map kind)
+        amb-z (gp-exp-count-ambiguous-for-kind records z-map kind)
   )
 
   (strcat
@@ -1311,10 +1745,12 @@
     " geom=" (itoa zg)
     " tekst=" (itoa zr)
     " zero=" (itoa zz)
+    " | niepewne: ID=" (itoa amb-id)
+    " Z=" (itoa amb-z)
   )
 )
 
-(defun gp-exp-total-source-summary (records id-map z-map / ia ib ir iauto za zb zg zr zz kind)
+(defun gp-exp-total-source-summary (records id-map z-map / ia ib ir iauto za zb zg zr zz kind amb-id amb-z)
   (setq ia (gp-exp-count-source-for-kind records id-map "INSERT" "ATTR")
         ib (gp-exp-count-source-for-kind records id-map "INSERT" "BLOCK_TEXT")
         ir 0
@@ -1333,6 +1769,9 @@
           zz (+ zz (gp-exp-count-source-for-kind records z-map kind "ZERO")))
   )
 
+  (setq amb-id (gp-exp-count-ambiguous-total id-map)
+        amb-z (gp-exp-count-ambiguous-total z-map))
+
   (strcat
     "Razem punktow: " (itoa (length records))
     " | ID: atrybut=" (itoa ia)
@@ -1344,6 +1783,8 @@
     " geometria=" (itoa zg)
     " tekst-obok=" (itoa zr)
     " zero=" (itoa zz)
+    " | NIEPEWNE: ID=" (itoa amb-id)
+    " Z=" (itoa amb-z)
   )
 )
 
