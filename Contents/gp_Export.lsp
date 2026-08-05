@@ -384,7 +384,325 @@
 ;; TEKSTY ZEWNATRZNE - RADAR
 ;; ======================================================
 
-(defun gp-exp-text-item-from-object (obj tid / min-pt max-pt result txt cat)
+(defun gp-exp-point-value-to-list (value / raw)
+  (cond
+    ((vl-catch-all-error-p value) nil)
+    ((= (type value) 'VARIANT)
+     (setq raw (vlax-variant-value value))
+     (gp-exp-point-value-to-list raw)
+    )
+    ((= (type value) 'SAFEARRAY)
+     (vlax-safearray->list value)
+    )
+    ((= (type value) 'LIST) value)
+    (T nil)
+  )
+)
+
+(defun gp-exp-safe-point-property (obj property / value)
+  (setq value
+    (vl-catch-all-apply
+      'vlax-get-property
+      (list obj property)
+    )
+  )
+  (gp-exp-point-value-to-list value)
+)
+
+(defun gp-exp-safe-number-property (obj property fallback / value)
+  (setq value
+    (vl-catch-all-apply
+      'vlax-get-property
+      (list obj property)
+    )
+  )
+  (if
+    (or
+      (vl-catch-all-error-p value)
+      (not (member (type value) '(INT REAL)))
+    )
+    fallback
+    value
+  )
+)
+
+(defun gp-exp-midpoint-2d (p1 p2)
+  (list
+    (/ (+ (car p1) (car p2)) 2.0)
+    (/ (+ (cadr p1) (cadr p2)) 2.0)
+    (/ (+ (if (caddr p1) (caddr p1) 0.0)
+          (if (caddr p2) (caddr p2) 0.0))
+       2.0)
+  )
+)
+
+(defun gp-exp-aabb-center (min-pt max-pt)
+  (list
+    (/ (+ (car min-pt) (car max-pt)) 2.0)
+    (/ (+ (cadr min-pt) (cadr max-pt)) 2.0)
+    (/ (+ (if (caddr min-pt) (caddr min-pt) 0.0)
+          (if (caddr max-pt) (caddr max-pt) 0.0))
+       2.0)
+  )
+)
+
+(defun gp-exp-world-to-local-2d (pt origin angle / dx dy ca sa)
+  ;; Obrot punktu o -angle wokol origin.
+  (setq dx (- (car pt) (car origin))
+        dy (- (cadr pt) (cadr origin))
+        ca (cos angle)
+        sa (sin angle))
+  (list
+    (+ (* dx ca) (* dy sa))
+    (+ (* (- dx) sa) (* dy ca))
+  )
+)
+
+(defun gp-exp-text-anchor-from-object (obj / type alignment p1 p2)
+  (setq type (gp-exp-safe-object-name obj))
+  (cond
+    ((= type "AcDbMText")
+     (gp-exp-safe-point-property obj 'InsertionPoint)
+    )
+
+    ((= type "AcDbText")
+     (setq alignment (fix (gp-exp-safe-number-property obj 'Alignment 0))
+           p1 (gp-exp-safe-point-property obj 'InsertionPoint)
+           p2 (gp-exp-safe-point-property obj 'TextAlignmentPoint))
+     (cond
+       ;; Aligned i Fit sa definiowane przez dwa punkty.
+       ((and (member alignment '(3 5)) p1 p2)
+        (gp-exp-midpoint-2d p1 p2)
+       )
+       ;; Left korzysta z punktu wstawienia.
+       ((= alignment 0) p1)
+       ;; Pozostale wyrownania korzystaja z punktu dopasowania.
+       (p2 p2)
+       (T p1)
+     )
+    )
+
+    (T
+     (gp-exp-safe-point-property obj 'InsertionPoint)
+    )
+  )
+)
+
+(defun gp-exp-text-rotation-from-object (obj / type ename data hcode p1 p2 dir)
+  (setq type (gp-exp-safe-object-name obj)
+        ename (vlax-vla-object->ename obj)
+        data (entget ename))
+  (cond
+    ((= type "AcDbMText")
+     ;; DXF 11 jest kierunkiem lokalnej osi X MTEXT w WCS.
+     (setq dir (cdr (assoc 11 data)))
+     (if
+       (and dir (> (distance '(0.0 0.0) (list (car dir) (cadr dir))) 1e-12))
+       (atan (cadr dir) (car dir))
+       (gp-exp-safe-number-property obj 'Rotation 0.0)
+     )
+    )
+
+    ((= type "AcDbText")
+     (setq hcode (if (assoc 72 data) (cdr (assoc 72 data)) 0)
+           p1 (gp-exp-safe-point-property obj 'InsertionPoint)
+           p2 (gp-exp-safe-point-property obj 'TextAlignmentPoint))
+     (if
+       (and
+         (member hcode '(3 5))
+         p1 p2
+         (> (gp-exp-dist-2d p1 p2) 1e-12)
+       )
+       (atan (- (cadr p2) (cadr p1)) (- (car p2) (car p1)))
+       (gp-exp-safe-number-property obj 'Rotation 0.0)
+     )
+    )
+
+    (T 0.0)
+  )
+)
+
+(defun gp-exp-local-box-from-world-aabb
+  (min-pt max-pt anchor angle / corners local p xmin xmax ymin ymax)
+  ;; Awaryjne przyblizenie, gdy nie mozemy pobrac lokalnych wymiarow tekstu.
+  (setq corners
+    (list
+      (list (car min-pt) (cadr min-pt))
+      (list (car min-pt) (cadr max-pt))
+      (list (car max-pt) (cadr min-pt))
+      (list (car max-pt) (cadr max-pt))
+    )
+  )
+  (foreach p corners
+    (setq local (gp-exp-world-to-local-2d p anchor angle))
+    (if (not xmin)
+      (setq xmin (car local)
+            xmax (car local)
+            ymin (cadr local)
+            ymax (cadr local))
+      (setq xmin (min xmin (car local))
+            xmax (max xmax (car local))
+            ymin (min ymin (cadr local))
+            ymax (max ymax (cadr local)))
+    )
+  )
+  (list (list xmin ymin) (list xmax ymax))
+)
+
+(defun gp-exp-text-local-box-text
+  (obj / ename data box pmin pmax width height hcode vcode alignment p1 p2 span xmin xmax ymin ymax)
+  (setq ename (vlax-vla-object->ename obj)
+        data (entget ename)
+        box (vl-catch-all-apply 'textbox (list data)))
+
+  (if (vl-catch-all-error-p box)
+    (setq box nil)
+  )
+
+  (if box
+    (progn
+      (setq pmin (car box)
+            pmax (cadr box)
+            width (max 1e-9 (- (car pmax) (car pmin)))
+            height (max 1e-9 (- (cadr pmax) (cadr pmin)))
+            hcode (if (assoc 72 data) (cdr (assoc 72 data)) 0)
+            vcode (if (assoc 73 data) (cdr (assoc 73 data)) 0)
+            alignment (fix (gp-exp-safe-number-property obj 'Alignment 0))
+            p1 (gp-exp-safe-point-property obj 'InsertionPoint)
+            p2 (gp-exp-safe-point-property obj 'TextAlignmentPoint))
+
+      ;; Lokalny zakres X wzgledem efektywnej kotwicy.
+      (cond
+        ((and (member hcode '(3 5)) p1 p2)
+         (setq span (gp-exp-dist-2d p1 p2))
+         (if (<= span 1e-9) (setq span width))
+         (setq xmin (/ (- span) 2.0)
+               xmax (/ span 2.0))
+        )
+        ((member hcode '(1 4))
+         (setq xmin (/ (- width) 2.0)
+               xmax (/ width 2.0))
+        )
+        ((= hcode 2)
+         (setq xmin (- width)
+               xmax 0.0)
+        )
+        (T
+         ;; Left zachowuje przesuniecia wynikajace np. z pochylenia fontu.
+         (setq xmin (car pmin)
+               xmax (car pmax))
+        )
+      )
+
+      ;; Lokalny zakres Y wzgledem linii bazowej albo punktu pionowego dopasowania.
+      (cond
+        ((or (= alignment 4) (= vcode 2))
+         (setq ymin (/ (- height) 2.0)
+               ymax (/ height 2.0))
+        )
+        ((= vcode 1)
+         (setq ymin 0.0
+               ymax height)
+        )
+        ((= vcode 3)
+         (setq ymin (- height)
+               ymax 0.0)
+        )
+        (T
+         (setq ymin (cadr pmin)
+               ymax (cadr pmax))
+        )
+      )
+
+      (list (list xmin ymin) (list xmax ymax))
+    )
+    nil
+  )
+)
+
+(defun gp-exp-text-local-box-mtext
+  (obj / ename data width height attach direction hpos vpos xmin xmax ymin ymax)
+  (setq ename (vlax-vla-object->ename obj)
+        data (entget ename)
+        width (if (assoc 42 data) (abs (cdr (assoc 42 data))) 0.0)
+        height (if (assoc 43 data) (abs (cdr (assoc 43 data))) 0.0)
+        attach (if (assoc 71 data) (cdr (assoc 71 data)) 1)
+        direction (if (assoc 72 data) (cdr (assoc 72 data)) 1))
+
+  ;; DXF 42/43 sa rzeczywistymi wymiarami sformatowanego MTEXT.
+  (if (<= width 1e-9)
+    (setq width (abs (gp-exp-safe-number-property obj 'Width 0.0)))
+  )
+  (if (<= height 1e-9)
+    (setq height (abs (gp-exp-safe-number-property obj 'Height 0.0)))
+  )
+
+  ;; Pionowy MTEXT (direction=3) korzysta z awaryjnego AABB,
+  ;; bo jego lokalny uklad szerokosci/wysokosci jest inny.
+  (if (and (/= direction 3) (> width 1e-9) (> height 1e-9))
+    (progn
+      (setq hpos
+        (cond
+          ((member attach '(1 4 7)) "LEFT")
+          ((member attach '(2 5 8)) "CENTER")
+          (T "RIGHT")
+        )
+      )
+      (setq vpos
+        (cond
+          ((member attach '(1 2 3)) "TOP")
+          ((member attach '(4 5 6)) "MIDDLE")
+          (T "BOTTOM")
+        )
+      )
+
+      (cond
+        ((= hpos "LEFT")
+         (setq xmin 0.0 xmax width)
+        )
+        ((= hpos "CENTER")
+         (setq xmin (/ (- width) 2.0) xmax (/ width 2.0))
+        )
+        (T
+         (setq xmin (- width) xmax 0.0)
+        )
+      )
+
+      (cond
+        ((= vpos "TOP")
+         (setq ymin (- height) ymax 0.0)
+        )
+        ((= vpos "MIDDLE")
+         (setq ymin (/ (- height) 2.0) ymax (/ height 2.0))
+        )
+        (T
+         (setq ymin 0.0 ymax height)
+        )
+      )
+
+      (list (list xmin ymin) (list xmax ymax))
+    )
+    nil
+  )
+)
+
+(defun gp-exp-text-local-box-from-object
+  (obj min-pt max-pt anchor angle / type box)
+  (setq type (gp-exp-safe-object-name obj)
+        box
+          (cond
+            ((= type "AcDbText") (gp-exp-text-local-box-text obj))
+            ((= type "AcDbMText") (gp-exp-text-local-box-mtext obj))
+            (T nil)
+          ))
+  (if box
+    box
+    (gp-exp-local-box-from-world-aabb min-pt max-pt anchor angle)
+  )
+)
+
+(defun gp-exp-text-item-from-object
+  (obj tid / min-pt max-pt result txt cat min-list max-list anchor angle local-box type)
   (setq result
     (vl-catch-all-apply
       'vla-GetBoundingBox
@@ -394,15 +712,37 @@
   (if (vl-catch-all-error-p result)
     nil
     (progn
-      (setq txt (gp-exp-safe-text-string obj)
-            cat (gp-exp-text-category txt))
+      (setq min-list (vlax-safearray->list min-pt)
+            max-list (vlax-safearray->list max-pt)
+            txt (gp-exp-safe-text-string obj)
+            cat (gp-exp-text-category txt)
+            type (gp-exp-safe-object-name obj)
+            anchor (gp-exp-text-anchor-from-object obj))
+
+      (if (not anchor)
+        (setq anchor (gp-exp-aabb-center min-list max-list))
+      )
+
+      (setq angle (gp-exp-text-rotation-from-object obj)
+            local-box
+              (gp-exp-text-local-box-from-object
+                obj min-list max-list anchor angle))
+
+      ;; Pierwsze 6 pol zachowuje zgodnosc z poprzednia struktura.
+      ;; Dodatkowe pola:
+      ;; 6 anchor, 7 local-min, 8 local-max, 9 rotation, 10 object-type.
       (list
-        (vlax-safearray->list min-pt)
-        (vlax-safearray->list max-pt)
+        min-list
+        max-list
         txt
         cat
         obj
         tid
+        anchor
+        (car local-box)
+        (cadr local-box)
+        angle
+        type
       )
     )
   )
@@ -420,20 +760,36 @@
   (nth 2 item)
 )
 
-(defun gp-exp-nearest-text (pt items radius category / item dists best best-center)
+(defun gp-exp-text-item-anchor (item)
+  (nth 6 item)
+)
+
+(defun gp-exp-text-item-local-min (item)
+  (nth 7 item)
+)
+
+(defun gp-exp-text-item-local-max (item)
+  (nth 8 item)
+)
+
+(defun gp-exp-text-item-rotation (item)
+  (if (nth 9 item) (nth 9 item) 0.0)
+)
+
+(defun gp-exp-nearest-text (pt items radius category / item info best best-score)
   (setq best nil
-        best-center nil)
+        best-score nil)
   (foreach item items
     (if (= (nth 3 item) category)
       (progn
-        (setq dists (geocad-text-radar-distance pt item))
+        (setq info (gp-exp-radar-distance-info pt item radius))
         (if
           (and
-            (<= (car dists) radius)
-            (or (not best-center) (< (cadr dists) best-center))
+            info
+            (or (not best-score) (< (nth 2 info) best-score))
           )
           (setq best item
-                best-center (cadr dists))
+                best-score (nth 2 info))
         )
       )
     )
@@ -441,13 +797,13 @@
   best
 )
 
-(defun gp-exp-near-text-count (pt items radius category / count item dists)
+(defun gp-exp-near-text-count (pt items radius category / count item info)
   (setq count 0)
   (foreach item items
     (if (= (nth 3 item) category)
       (progn
-        (setq dists (geocad-text-radar-distance pt item))
-        (if (<= (car dists) radius)
+        (setq info (gp-exp-radar-distance-info pt item radius))
+        (if info
           (setq count (1+ count))
         )
       )
@@ -874,24 +1230,32 @@
 )
 
 ;; ======================================================
-;; SZYBKI LOKALNY RADAR TEKSTOW 1:1
+;; SZYBKI HYBRYDOWY RADAR TEKSTOW 1:1
 ;; ======================================================
 ;;
-;; Zasady wydajnosciowe:
-;; - kandydaci sa wyszukiwani lokalnie sweep-line po osi X,
-;; - przechowujemy maksymalnie kilka najlepszych tekstow na rekord,
-;; - najpierw obslugujemy rekordy z najmniejsza liczba kandydatow,
-;; - tekst moze zostac uzyty tylko raz w danej kategorii,
-;; - dopuszczamy najwyzej jedna lokalna zamiane przypisania,
-;; - brak rekurencji i brak lancuchow przepinania przez caly rysunek.
+;; Geometria kandydata:
+;; - prawidlowa kotwica zalezna od typu i wyrownania tekstu,
+;; - obrocony lokalny prostokat tekstu,
+;; - wirtualne zmniejszenie prostokata bez modyfikowania DWG,
+;; - ograniczenie oddzialywania tekstu do stalej wielokrotnosci promienia.
+;;
+;; Wydajnosc:
+;; - sweep-line oparty na kotwicach, niezalezny od wielkosci tekstu,
+;; - maksymalnie kilka najlepszych tekstow na rekord,
+;; - rekordy z najmniejsza liczba kandydatow sa obslugiwane pierwsze,
+;; - najwyzej jedna lokalna zamiana, bez rekurencji.
 ;;
 ;; Kandydat:
-;; (score d-center d-edge rid tid text-item value)
+;; (score d-anchor d-box rid tid text-item value)
 ;; ======================================================
 
 (setq *gp-exp-radar-ambiguity-absolute* 0.10)
 (setq *gp-exp-radar-ambiguity-ratio* 1.25)
 (setq *gp-exp-radar-max-candidates* 6)
+(setq *gp-exp-radar-anchor-limit-factor* 3.0)
+(setq *gp-exp-radar-anchor-weight* 0.25)
+(setq *gp-exp-radar-box-shrink-height-factor* 0.10)
+(setq *gp-exp-radar-box-shrink-radius-factor* 0.20)
 (setq *gp-exp-last-radar-candidate-map* nil)
 
 (defun gp-exp-map-set (map key value / pair)
@@ -916,17 +1280,23 @@
   )
 )
 
-(defun gp-exp-radar-candidate-score (d-center d-edge)
-  (+ (* 0.75 d-center) (* 0.25 d-edge))
+(defun gp-exp-radar-candidate-score (d-anchor d-box radius)
+  (+
+    d-box
+    (*
+      *gp-exp-radar-anchor-weight*
+      (max 0.0 (- d-anchor radius))
+    )
+  )
 )
 
-(defun gp-exp-radar-candidate-less-p (a b / as bs ac bc ae be ar br at bt)
+(defun gp-exp-radar-candidate-less-p (a b / as bs aa ba ab bb ar br at bt)
   (setq as (nth 0 a)
         bs (nth 0 b)
-        ac (nth 1 a)
-        bc (nth 1 b)
-        ae (nth 2 a)
-        be (nth 2 b)
+        aa (nth 1 a)
+        ba (nth 1 b)
+        ab (nth 2 a)
+        bb (nth 2 b)
         ar (nth 3 a)
         br (nth 3 b)
         at (nth 4 a)
@@ -934,8 +1304,8 @@
 
   (cond
     ((not (equal as bs 1e-9)) (< as bs))
-    ((not (equal ac bc 1e-9)) (< ac bc))
-    ((not (equal ae be 1e-9)) (< ae be))
+    ((not (equal aa ba 1e-9)) (< aa ba))
+    ((not (equal ab bb 1e-9)) (< ab bb))
     ((/= ar br) (< ar br))
     (T (< at bt))
   )
@@ -943,7 +1313,6 @@
 
 (defun gp-exp-radar-record-key-less-p (a b / an bn ap bp as bs ar br)
   ;; Klucz: (liczba-kandydatow priorytet-typu najlepszy-koszt rid)
-  ;; Najpierw chronimy rekordy majace najmniej alternatyw.
   (setq an (nth 0 a)
         bn (nth 0 b)
         ap (nth 1 a)
@@ -991,7 +1360,6 @@
 )
 
 (defun gp-exp-prepare-radar-texts (texts category / result item value)
-  ;; Kategoria i wartosc sa obliczane tylko raz na przebieg.
   (setq result '())
   (foreach item texts
     (if (= (nth 3 item) category)
@@ -1016,39 +1384,108 @@
   (reverse result)
 )
 
-(defun gp-exp-point-near-text-box-p (pt item radius / px py min-x max-x min-y max-y)
-  (setq px (car pt)
-        py (cadr pt)
-        min-x (min (caar item) (caadr item))
-        max-x (max (caar item) (caadr item))
-        min-y (min (cadar item) (cadadr item))
-        max-y (max (cadar item) (cadadr item)))
-  (and
-    (>= px (- min-x radius))
-    (<= px (+ max-x radius))
-    (>= py (- min-y radius))
-    (<= py (+ max-y radius))
+(defun gp-exp-radar-effective-local-box
+  (item radius / pmin pmax xmin xmax ymin ymax width height margin limit sxmin sxmax symin symax)
+  ;; Prostokat jest wirtualnie zmniejszany, a potem przycinany do kwadratu
+  ;; [-3R, 3R] wokol kotwicy. Obiekt w rysunku nie jest zmieniany.
+  (setq pmin (gp-exp-text-item-local-min item)
+        pmax (gp-exp-text-item-local-max item))
+
+  (if (and pmin pmax (> radius 0.0))
+    (progn
+      (setq xmin (min (car pmin) (car pmax))
+            xmax (max (car pmin) (car pmax))
+            ymin (min (cadr pmin) (cadr pmax))
+            ymax (max (cadr pmin) (cadr pmax))
+            width (max 0.0 (- xmax xmin))
+            height (max 0.0 (- ymax ymin))
+            margin
+              (min
+                (* *gp-exp-radar-box-shrink-height-factor* height)
+                (* *gp-exp-radar-box-shrink-radius-factor* radius)
+                (* 0.45 width)
+                (* 0.45 height)
+              )
+            limit (* *gp-exp-radar-anchor-limit-factor* radius)
+            sxmin (max (- limit) (+ xmin margin))
+            sxmax (min limit (- xmax margin))
+            symin (max (- limit) (+ ymin margin))
+            symax (min limit (- ymax margin)))
+
+      (if (and (<= sxmin sxmax) (<= symin symax))
+        (list (list sxmin symin) (list sxmax symax))
+        ;; Nietypowy tekst: zachowujemy sama kotwice jako punktowy obszar.
+        (list '(0.0 0.0) '(0.0 0.0))
+      )
+    )
+    nil
   )
 )
 
-(defun gp-exp-near-text-info (pt items radius / count nearest nearest-center item dists)
-  ;; Wynik: (liczba najblizszy-item)
+(defun gp-exp-radar-distance-info
+  (pt item radius / anchor limit d-anchor local-pt box pmin pmax cx cy d-box score)
+  ;; Wynik: (d-box d-anchor score), albo nil gdy tekst nie jest kandydatem.
+  (setq anchor (gp-exp-text-item-anchor item))
+  (if (and anchor (> radius 0.0))
+    (progn
+      (setq limit (* *gp-exp-radar-anchor-limit-factor* radius)
+            d-anchor (gp-exp-dist-2d pt anchor))
+
+      (if (<= d-anchor limit)
+        (progn
+          (setq box (gp-exp-radar-effective-local-box item radius))
+          (if box
+            (progn
+              (setq local-pt
+                      (gp-exp-world-to-local-2d
+                        pt anchor (gp-exp-text-item-rotation item))
+                    pmin (car box)
+                    pmax (cadr box)
+                    cx (max (car pmin) (min (car local-pt) (car pmax)))
+                    cy (max (cadr pmin) (min (cadr local-pt) (cadr pmax)))
+                    d-box
+                      (distance
+                        (list (car local-pt) (cadr local-pt))
+                        (list cx cy)))
+
+              (if (<= d-box radius)
+                (progn
+                  (setq score
+                    (gp-exp-radar-candidate-score
+                      d-anchor d-box radius))
+                  (list d-box d-anchor score)
+                )
+                nil
+              )
+            )
+            nil
+          )
+        )
+        nil
+      )
+    )
+    nil
+  )
+)
+
+(defun gp-exp-point-near-text-box-p (pt item radius)
+  (if (gp-exp-radar-distance-info pt item radius) T nil)
+)
+
+(defun gp-exp-near-text-info (pt items radius / count nearest nearest-score item info)
+  ;; Wynik: (liczba-kandydatow najblizszy-item).
   (setq count 0
         nearest nil
-        nearest-center nil)
+        nearest-score nil)
   (foreach item items
-    (if (gp-exp-point-near-text-box-p pt item radius)
+    (setq info (gp-exp-radar-distance-info pt item radius))
+    (if info
       (progn
-        (setq dists (geocad-text-radar-distance pt item))
-        (if (<= (car dists) radius)
-          (progn
-            (setq count (1+ count))
-            (if
-              (or (not nearest-center) (< (cadr dists) nearest-center))
-              (setq nearest item
-                    nearest-center (cadr dists))
-            )
-          )
+        (setq count (1+ count))
+        (if
+          (or (not nearest-score) (< (nth 2 info) nearest-score))
+          (setq nearest item
+                nearest-score (nth 2 info))
         )
       )
     )
@@ -1066,7 +1503,7 @@
 )
 
 (defun gp-exp-radar-text-x-less-p (a b / ax bx at bt)
-  ;; Tekst pomocniczy: (expanded-min-x expanded-max-x tid prepared-item)
+  ;; Tekst pomocniczy: (anchor-min-x anchor-max-x tid prepared-item)
   (setq ax (nth 0 a)
         bx (nth 0 b)
         at (nth 2 a)
@@ -1086,17 +1523,19 @@
     records texts radius category base-map z-mode
     /
     result prepared record rid pt base
-    record-items record-entry
-    text-items text-entry prepared-item item value
-    min-x max-x px active new-active remaining
-    candidates dists d-edge d-center score sorted
+    record-items record-entry text-items text-entry
+    prepared-item item value anchor limit min-x max-x px py
+    active new-active remaining candidates info
+    d-box d-anchor score sorted
   )
 
-  ;; Sweep-line ogranicza porownania do tekstow lokalnych w osi X.
+  ;; Sweep-line bazuje na kotwicy +/- 3R. Wielkosc napisu nie rozszerza
+  ;; listy aktywnych tekstow.
   (setq result '()
         prepared (gp-exp-prepare-radar-texts texts category)
         record-items '()
-        text-items '())
+        text-items '()
+        limit (* *gp-exp-radar-anchor-limit-factor* radius))
 
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
@@ -1109,12 +1548,17 @@
 
   (foreach prepared-item prepared
     (setq item (cdr prepared-item)
-          min-x (- (min (caar item) (caadr item)) radius)
-          max-x (+ (max (caar item) (caadr item)) radius))
-    (setq text-items
-      (cons
-        (list min-x max-x (gp-exp-text-item-id item) prepared-item)
-        text-items
+          anchor (gp-exp-text-item-anchor item))
+    (if anchor
+      (progn
+        (setq min-x (- (car anchor) limit)
+              max-x (+ (car anchor) limit))
+        (setq text-items
+          (cons
+            (list min-x max-x (gp-exp-text-item-id item) prepared-item)
+            text-items
+          )
+        )
       )
     )
   )
@@ -1130,6 +1574,7 @@
           rid (nth 1 record-entry)
           record (nth 2 record-entry)
           pt (gp-exp-record-get record 'pt)
+          py (cadr pt)
           candidates '())
 
     (while (and remaining (<= (nth 0 (car remaining)) px))
@@ -1148,18 +1593,21 @@
     (foreach text-entry active
       (setq prepared-item (nth 3 text-entry)
             value (car prepared-item)
-            item (cdr prepared-item))
-      (if (gp-exp-point-near-text-box-p pt item radius)
+            item (cdr prepared-item)
+            anchor (gp-exp-text-item-anchor item))
+
+      ;; Tani test Y przed geometria obroconego prostokata.
+      (if (<= (abs (- py (cadr anchor))) limit)
         (progn
-          (setq dists (geocad-text-radar-distance pt item)
-                d-edge (car dists)
-                d-center (cadr dists))
-          (if (<= d-edge radius)
+          (setq info (gp-exp-radar-distance-info pt item radius))
+          (if info
             (progn
-              (setq score (gp-exp-radar-candidate-score d-center d-edge))
+              (setq d-box (nth 0 info)
+                    d-anchor (nth 1 info)
+                    score (nth 2 info))
               (setq candidates
                 (cons
-                  (list score d-center d-edge rid
+                  (list score d-anchor d-box rid
                         (gp-exp-text-item-id item) item value)
                   candidates
                 )
@@ -1325,7 +1773,9 @@
     (cons 'text-object (gp-exp-text-item-object (nth 5 candidate)))
     (cons 'text-id tid)
     (cons 'distance (nth 1 candidate))
+    (cons 'anchor-distance (nth 1 candidate))
     (cons 'edge-distance (nth 2 candidate))
+    (cons 'box-distance (nth 2 candidate))
     (cons 'match-score (nth 0 candidate))
     (cons 'candidate-count (length candidates))
     (cons 'ambiguous ambiguous)
@@ -1351,7 +1801,6 @@
         rid-map '()
         tid-map '())
 
-  ;; Koszt jest ograniczony: brak rekurencji, najwyzej jedna zamiana.
   (foreach rid record-order
     (setq state
       (gp-exp-radar-assign-local rid candidate-map rid-map tid-map)
