@@ -263,7 +263,7 @@
     (progn
       (setq p1 (gp-exp-record-get (nth 0 records) 'pt)
             p2 (gp-exp-record-get (nth (fix (/ count 2)) records) 'pt)
-            p3 (gp-exp-record-get (car (last records)) 'pt)
+            p3 (gp-exp-record-get (last records) 'pt)
             r1 (gp-exp-detect-epsg p1)
             r2 (gp-exp-detect-epsg p2)
             r3 (gp-exp-detect-epsg p3))
