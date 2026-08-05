@@ -5,185 +5,207 @@
 ;; --- FUNKCJE POMOCNICZE I MATEMATYCZNE ---  
 ;; ==========================================  
 
-(defun dist-2d (p1 p2)
+(defun dist-2d (p1 p2) 
   (geocad-dist-2d p1 p2)
 )
 
-(defun categorize-text (txt)
+(defun categorize-text (txt) 
   (geocad-text-radar-categorize txt)
 )
 
 ;; ZMODYFIKOWANY ALGORYTM AABB (Podwójna Metryka: Krawędź i Środek)  
-(defun get-dist-to-txt (pt t-item)
+(defun get-dist-to-txt (pt t-item) 
   (geocad-text-radar-distance pt t-item)
 )
 
-(defun geocad-exp-err (msg)   
-  (if f (vl-catch-all-apply 'close (list f)))   
-  (if saved-sysvars (foreach pair saved-sysvars (vl-catch-all-apply 'setvar (list (car pair) (cdr pair)))))   
-  (setq *error* old-err)    
-  (princ (if (member msg '("Function cancelled" "quit / exit abort")) "\nPrzerwano." (strcat "\nBlad: " msg)))   
-  (princ)   
+(defun geocad-exp-err (msg) 
+  (if f (vl-catch-all-apply 'close (list f)))
+  (if saved-sysvars 
+    (foreach pair saved-sysvars 
+      (vl-catch-all-apply 'setvar (list (car pair) (cdr pair)))
+    )
+  )
+  (setq *error* old-err)
+  (princ 
+    (if (member msg '("Function cancelled" "quit / exit abort")) 
+      "\nPrzerwano."
+      (strcat "\nBlad: " msg)
+    )
+  )
+  (princ)
 )   
 
-(defun get-native-windows-save-file (out-format / wsh tmpFile shellCmd f res filter title default-ext )    
+(defun get-native-windows-save-file (out-format / wsh tmpFile shellCmd f res filter 
+                                     title default-ext
+                                    ) 
   ;; Dialog zapisu dopasowany do wybranego formatu eksportu.
   ;; TXT - klasyczny eksport pikiet z numerem.
   ;; PTS - prosta chmura punktow z liczba punktow w pierwszej linii.
-  (if (= out-format "pts")
-    (progn
+  (if (= out-format "pts") 
+    (progn 
       (setq filter "Chmura punktow PTS (*.pts)|*.pts|Pliki tekstowe (*.txt)|*.txt|Wszystkie pliki (*.*)|*.*")
       (setq title "Zapisz chmure punktow PTS")
       (setq default-ext "pts")
     )
 
-    (progn
+    (progn 
       (setq filter "Pliki tekstowe (*.txt)|*.txt|Wszystkie pliki (*.*)|*.*")
       (setq title "Zapisz pikiety TXT")
       (setq default-ext "txt")
     )
   )
 
-  (setq wsh (vlax-create-object "WScript.Shell") tmpFile (vl-filename-mktemp "file_res.txt"))    
-  (setq shellCmd
-    (strcat
-      "powershell.exe -WindowStyle Hidden -Command \"& {"
-      "Add-Type -AssemblyName System.Windows.Forms;"
-      "$d = New-Object System.Windows.Forms.SaveFileDialog;"
-      "$d.Filter = '"
-      filter
-      "';"
-      "$d.DefaultExt = '"
-      default-ext
-      "';"
-      "$d.AddExtension = $true;"
-      "$d.Title = '"
-      title
-      "';"
-      "if($d.ShowDialog() -eq 'OK') { [System.IO.File]::WriteAllText('"
-      (vl-string-translate "\\" "/" tmpFile)
-      "', $d.FileName) }}"
-      "\""
+  (setq wsh     (vlax-create-object "WScript.Shell")
+        tmpFile (vl-filename-mktemp "file_res.txt")
+  )
+  (setq shellCmd (strcat 
+                   "powershell.exe -WindowStyle Hidden -Command \"& {"
+                   "Add-Type -AssemblyName System.Windows.Forms;"
+                   "$d = New-Object System.Windows.Forms.SaveFileDialog;"
+                   "$d.Filter = '"
+                   filter
+                   "';"
+                   "$d.DefaultExt = '"
+                   default-ext
+                   "';"
+                   "$d.AddExtension = $true;"
+                   "$d.Title = '"
+                   title
+                   "';"
+                   "if($d.ShowDialog() -eq 'OK') { [System.IO.File]::WriteAllText('"
+                   (vl-string-translate "\\" "/" tmpFile)
+                   "', $d.FileName) }}"
+                   "\""
+                 )
+  )
+  (vlax-invoke-method wsh 'Run shellCmd 0 :vlax-true)
+  (if (findfile tmpFile) 
+    (progn (setq f (open tmpFile "r")) 
+           (setq res (read-line f))
+           (close f)
+           (vl-file-delete tmpFile)
     )
-  )    
-  (vlax-invoke-method wsh 'Run shellCmd 0 :vlax-true)   
-  (if (findfile tmpFile) (progn (setq f (open tmpFile "r")) (setq res (read-line f)) (close f) (vl-file-delete tmpFile)))    
-  res    
+  )
+  res
 )   
 
-(defun detect-epsg (pt / x y res)   
-  (if (not pt) (setq res "Brak")   
-    (progn (setq x (car pt) y (cadr pt) res "Uklad Lokalny")   
-      (if (and (> y 4900000) (< y 6100000))   
-        (cond ((and (> x 5300000) (< x 5900000)) (setq res "Uklad 2000 (S5)"))   
-              ((and (> x 6300000) (< x 6900000)) (setq res "Uklad 2000 (S6)"))   
-              ((and (> x 7300000) (< x 7900000)) (setq res "Uklad 2000 (S7)"))   
-              ((and (> x 8300000) (< x 8900000)) (setq res "Uklad 2000 (S8)"))))   
-      (if (and (= res "Uklad Lokalny") (> x 3000000) (< x 6000000) (> y 3000000) (< y 6000000))   
-          (setq res "Uklad 1965 (?)"))   
-      res)))   
+(defun detect-epsg (pt / x y res) 
+  (if (not pt) 
+    (setq res "Brak")
+    (progn 
+      (setq x   (car pt)
+            y   (cadr pt)
+            res "Uklad Lokalny"
+      )
+      (if (and (> y 4900000) (< y 6100000)) 
+        (cond 
+          ((and (> x 5300000) (< x 5900000)) (setq res "Uklad 2000 (S5)"))
+          ((and (> x 6300000) (< x 6900000)) (setq res "Uklad 2000 (S6)"))
+          ((and (> x 7300000) (< x 7900000)) (setq res "Uklad 2000 (S7)"))
+          ((and (> x 8300000) (< x 8900000)) (setq res "Uklad 2000 (S8)"))
+        )
+      )
+      (if 
+        (and (= res "Uklad Lokalny") 
+             (> x 3000000)
+             (< x 6000000)
+             (> y 3000000)
+             (< y 6000000)
+        )
+        (setq res "Uklad 1965 (?)")
+      )
+      res
+    )
+  )
+)   
 
-(defun extract-v22 (obj mode-solid / res type start-p end-p i ent-data ename)
+(defun extract-v22 (obj mode-solid / res type start-p end-p i ent-data ename) 
   (setq res '())
   (setq type (vla-get-ObjectName obj))
 
-  (cond
+  (cond 
 
     ;; Natywny POINT AutoCAD.
     ;; Wspolrzedne pobieramy z DXF 10 i przeliczamy do WCS.
     ((= type "AcDbPoint")
      (setq ename (vlax-vla-object->ename obj))
      (setq ent-data (entget ename))
-     (setq res
-       (list
-         (trans
-           (cdr (assoc 10 ent-data))
-           ename
-           0
-         )
-       )
+     (setq res (list 
+                 (trans 
+                   (cdr (assoc 10 ent-data))
+                   ename
+                   0
+                 )
+               )
      )
     )
 
     ;; Wstawienie bloku.
     ((= type "AcDbBlockReference")
-     (setq res
-       (list
-         (vlax-safearray->list
-           (vlax-variant-value
-             (vla-get-InsertionPoint obj)
-           )
-         )
-       )
+     (setq res (list 
+                 (vlax-safearray->list 
+                   (vlax-variant-value 
+                     (vla-get-InsertionPoint obj)
+                   )
+                 )
+               )
      )
     )
 
     ;; OKRAG - eksportowany jest wylacznie srodek okregu
     ((= type "AcDbCircle")
-     (setq res
-       (list
-         (vlax-safearray->list
-           (vlax-variant-value
-             (vla-get-Center obj)
-           )
-         )
-       )
+     (setq res (list 
+                 (vlax-safearray->list 
+                   (vlax-variant-value 
+                     (vla-get-Center obj)
+                   )
+                 )
+               )
      )
     )
 
-    ((member type
-       '(
-         "AcDbLine"
-         "AcDbPolyline"
-         "AcDb2dPolyline"
-         "AcDb3dPolyline"
-         "AcDbArc"
-        )
+    ((member type 
+             '("AcDbLine" "AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline" "AcDbArc")
      )
-     (cond
+     (cond 
        ((= type "AcDbArc")
         (setq start-p (vlax-curve-getStartParam obj))
         (setq end-p (vlax-curve-getEndParam obj))
-        (setq res
-          (list
-            (vlax-curve-getPointAtParam obj start-p)
-            (vlax-curve-getPointAtParam
-              obj
-              (+ start-p (/ (- end-p start-p) 2.0))
-            )
-            (vlax-curve-getPointAtParam obj end-p)
-          )
+        (setq res (list 
+                    (vlax-curve-getPointAtParam obj start-p)
+                    (vlax-curve-getPointAtParam 
+                      obj
+                      (+ start-p (/ (- end-p start-p) 2.0))
+                    )
+                    (vlax-curve-getPointAtParam obj end-p)
+                  )
         )
        )
 
        ((= type "AcDbLine")
-        (setq res
-          (list
-            (vlax-curve-getStartPoint obj)
-            (vlax-curve-getEndPoint obj)
-          )
+        (setq res (list 
+                    (vlax-curve-getStartPoint obj)
+                    (vlax-curve-getEndPoint obj)
+                  )
         )
        )
 
        (T
-        (setq start-p
-          (fix
-            (vlax-curve-getStartParam obj)
-          )
+        (setq start-p (fix 
+                        (vlax-curve-getStartParam obj)
+                      )
         )
-        (setq end-p
-          (fix
-            (vlax-curve-getEndParam obj)
-          )
+        (setq end-p (fix 
+                      (vlax-curve-getEndParam obj)
+                    )
         )
         (setq i start-p)
 
-        (while (<= i end-p)
-          (setq res
-            (cons
-              (vlax-curve-getPointAtParam obj i)
-              res
-            )
+        (while (<= i end-p) 
+          (setq res (cons 
+                      (vlax-curve-getPointAtParam obj i)
+                      res
+                    )
           )
           (setq i (1+ i))
         )
@@ -197,26 +219,24 @@
      (setq ename (vlax-vla-object->ename obj))
      (setq ent-data (entget ename))
 
-     (setq res
-       (list
-         (trans
-           (cdr (assoc 10 ent-data))
-           ename
-           0
-         )
-       )
+     (setq res (list 
+                 (trans 
+                   (cdr (assoc 10 ent-data))
+                   ename
+                   0
+                 )
+               )
      )
 
-     (if (/= mode-solid "1")
-       (setq res
-         (append
-           res
-           (list
-             (trans (cdr (assoc 11 ent-data)) ename 0)
-             (trans (cdr (assoc 12 ent-data)) ename 0)
-             (trans (cdr (assoc 13 ent-data)) ename 0)
-           )
-         )
+     (if (/= mode-solid "1") 
+       (setq res (append 
+                   res
+                   (list 
+                     (trans (cdr (assoc 11 ent-data)) ename 0)
+                     (trans (cdr (assoc 12 ent-data)) ename 0)
+                     (trans (cdr (assoc 13 ent-data)) ename 0)
+                   )
+                 )
        )
      )
     )
@@ -225,22 +245,349 @@
   res
 ) 
 
-(defun parse-tags (str)
+(defun parse-tags (str) 
   (geocad-parse-tags str)
 )
 
 (defun format-coord (val) (vl-string-translate "," "." (rtos val 2 3)))   
 
-(defun geocad-export-show-point (pt / acadObj margin p1 p2)
+;; ======================================================
+;; STATYSTYKI ZRODEL ID / Z DLA POINT I INSERT
+;; ======================================================
+
+(defun geocad-export-nonempty-text-p (txt) 
+  (and 
+    txt
+    (/= (vl-string-trim " \t\r\n" txt) "")
+  )
+)
+
+(defun geocad-export-block-attribute-flags (obj id-tags z-tags / attrs att tag txt 
+                                            has-id has-z
+                                           ) 
+
+  ;; Zwraca:
+  ;; (has-id has-z)
+  ;;
+  ;; Sprawdza, czy blok zawiera niepusty atrybut
+  ;; pasujacy do tagow ustawionych w UI.
+
+  (setq has-id nil)
+  (setq has-z nil)
+
+  (if (= (vla-get-HasAttributes obj) :vlax-true) 
+    (progn 
+      (setq attrs (vl-catch-all-apply 
+                    'vlax-invoke
+                    (list obj 'GetAttributes)
+                  )
+      )
+
+      (if (not (vl-catch-all-error-p attrs)) 
+        (foreach att attrs 
+          (setq tag (strcase 
+                      (vla-get-TagString att)
+                    )
+          )
+
+          (setq txt (vla-get-TextString att))
+
+          ;; ID z atrybutu
+          (if 
+            (and 
+              (not has-id)
+              (member tag id-tags)
+              (geocad-export-nonempty-text-p txt)
+            )
+            (setq has-id T)
+          )
+
+          ;; Z z atrybutu
+          (if 
+            (and 
+              (not has-z)
+              (member tag z-tags)
+              (geocad-export-nonempty-text-p txt)
+            )
+            (setq has-z T)
+          )
+        )
+      )
+    )
+  )
+
+  (list has-id has-z)
+)
+
+(defun geocad-export-update-source-stats (items txt-items radius id-tags z-tags / 
+                                          item pt obj type flags attr-id attr-z geom-z 
+                                          radar-id radar-z point-total point-id-text 
+                                          point-id-missing point-z-geom point-z-text 
+                                          point-z-missing block-total block-id-attr 
+                                          block-id-text block-id-missing block-z-attr 
+                                          block-z-geom block-z-text block-z-missing
+                                         ) 
+
+  ;; ------------------------------
+  ;; Natywne POINT
+  ;; ------------------------------
+
+  (setq point-total 0)
+  (setq point-id-text 0)
+  (setq point-id-missing 0)
+
+  (setq point-z-geom 0)
+  (setq point-z-text 0)
+  (setq point-z-missing 0)
+
+  ;; ------------------------------
+  ;; Bloki INSERT
+  ;; ------------------------------
+
+  (setq block-total 0)
+
+  (setq block-id-attr 0)
+  (setq block-id-text 0)
+  (setq block-id-missing 0)
+
+  (setq block-z-attr 0)
+  (setq block-z-geom 0)
+  (setq block-z-text 0)
+  (setq block-z-missing 0)
+
+  ;; items ma strukture:
+  ;; (
+  ;;   ((x y z) vla-object)
+  ;;   ...
+  ;; )
+  ;;
+  ;; Lista zawiera rowniez punkty linii/polilinii,
+  ;; ale tutaj liczymy tylko AcDbPoint i AcDbBlockReference.
+
+  (foreach item items 
+    (setq pt (car item))
+    (setq obj (cadr item))
+    (setq type (vla-get-ObjectName obj))
+
+    (cond 
+
+      ;; ==================================================
+      ;; NATYWNY POINT
+      ;; ==================================================
+
+      ((= type "AcDbPoint")
+       (setq point-total (1+ point-total))
+
+       ;; ID dla POINT moze pochodzic tylko
+       ;; z zewnetrznego tekstu radaru.
+
+       (setq radar-id (geocad-text-radar-find-nearest 
+                        pt
+                        txt-items
+                        radius
+                        "ID"
+                      )
+       )
+
+       (if radar-id 
+         (setq point-id-text (1+ point-id-text))
+         (setq point-id-missing (1+ point-id-missing))
+       )
+
+       ;; Z:
+       ;; 1. geometria POINT,
+       ;; 2. tekst z radaru,
+       ;; 3. brak.
+
+       (setq geom-z (and 
+                      (caddr pt)
+                      (> (abs (caddr pt)) 0.001)
+                    )
+       )
+
+       (cond 
+         (geom-z
+          (setq point-z-geom (1+ point-z-geom))
+         )
+
+         ((setq radar-z (geocad-text-radar-find-nearest 
+                          pt
+                          txt-items
+                          radius
+                          "Z"
+                        )
+          )
+          (setq point-z-text (1+ point-z-text))
+         )
+
+         (T
+          (setq point-z-missing (1+ point-z-missing))
+         )
+       )
+      )
+
+      ;; ==================================================
+      ;; BLOK INSERT
+      ;; ==================================================
+
+      ((= type "AcDbBlockReference")
+       (setq block-total (1+ block-total))
+
+       (setq flags (geocad-export-block-attribute-flags 
+                     obj
+                     id-tags
+                     z-tags
+                   )
+       )
+
+       (setq attr-id (car flags))
+       (setq attr-z (cadr flags))
+
+       ;; ID:
+       ;; 1. atrybut bloku,
+       ;; 2. tekst z radaru,
+       ;; 3. brak.
+
+       (cond 
+         (attr-id
+          (setq block-id-attr (1+ block-id-attr))
+         )
+
+         ((setq radar-id (geocad-text-radar-find-nearest 
+                           pt
+                           txt-items
+                           radius
+                           "ID"
+                         )
+          )
+          (setq block-id-text (1+ block-id-text))
+         )
+
+         (T
+          (setq block-id-missing (1+ block-id-missing))
+         )
+       )
+
+       ;; Z:
+       ;; 1. atrybut bloku,
+       ;; 2. geometria punktu wstawienia,
+       ;; 3. tekst z radaru,
+       ;; 4. brak.
+
+       (setq geom-z (and 
+                      (caddr pt)
+                      (> (abs (caddr pt)) 0.001)
+                    )
+       )
+
+       (cond 
+         (attr-z
+          (setq block-z-attr (1+ block-z-attr))
+         )
+
+         (geom-z
+          (setq block-z-geom (1+ block-z-geom))
+         )
+
+         ((setq radar-z (geocad-text-radar-find-nearest 
+                          pt
+                          txt-items
+                          radius
+                          "Z"
+                        )
+          )
+          (setq block-z-text (1+ block-z-text))
+         )
+
+         (T
+          (setq block-z-missing (1+ block-z-missing))
+         )
+       )
+      )
+    )
+  )
+
+  ;; ==================================================
+  ;; AKTUALIZACJA UI
+  ;; ==================================================
+
+  (set_tile 
+    "rep_point_id_detail"
+    (strcat 
+      "ID: "
+      (itoa point-id-text)
+      " / "
+      (itoa point-total)
+      " | tekst obok: "
+      (itoa point-id-text)
+      " | brak: "
+      (itoa point-id-missing)
+    )
+  )
+
+  (set_tile 
+    "rep_point_z_detail"
+    (strcat 
+      "Z: "
+      (itoa (+ point-z-geom point-z-text))
+      " / "
+      (itoa point-total)
+      " | geometria: "
+      (itoa point-z-geom)
+      " | tekst obok: "
+      (itoa point-z-text)
+      " | brak: "
+      (itoa point-z-missing)
+    )
+  )
+
+  (set_tile 
+    "rep_block_id_detail"
+    (strcat 
+      "ID: "
+      (itoa (+ block-id-attr block-id-text))
+      " / "
+      (itoa block-total)
+      " | atrybut: "
+      (itoa block-id-attr)
+      " | tekst obok: "
+      (itoa block-id-text)
+      " | brak: "
+      (itoa block-id-missing)
+    )
+  )
+
+  (set_tile 
+    "rep_block_z_detail"
+    (strcat 
+      "Z: "
+      (itoa (+ block-z-attr block-z-geom block-z-text))
+      " / "
+      (itoa block-total)
+      " | atrybut: "
+      (itoa block-z-attr)
+      " | geometria: "
+      (itoa block-z-geom)
+      " | tekst obok: "
+      (itoa block-z-text)
+      " | brak: "
+      (itoa block-z-missing)
+    )
+  )
+
+  (princ)
+)
+
+(defun geocad-export-show-point (pt / acadObj margin p1 p2) 
   ;; Bezpieczne przyblizenie punktu z DCL bez wywolywania command.
   ;; Wzorowane na podgladzie rekordow w NIWELACJA_MULTI.
-  (if pt
-    (progn
+  (if pt 
+    (progn 
       (setq acadObj (vlax-get-acad-object))
       (setq margin 5.0)
       (setq p1 (list (- (car pt) margin) (- (cadr pt) margin) 0.0))
       (setq p2 (list (+ (car pt) margin) (+ (cadr pt) margin) 0.0))
-      (vl-catch-all-apply
+      (vl-catch-all-apply 
         'vla-ZoomWindow
         (list acadObj (vlax-3d-point p1) (vlax-3d-point p2))
       )
@@ -248,26 +595,26 @@
   )
 )
 
-(defun geocad-export-show-conflict (conflict / pt srcObj txtObj ss en)
+(defun geocad-export-show-conflict (conflict / pt srcObj txtObj ss en) 
   ;; Podglad konfliktu: zaznacza obiekt pikiety i przypisany tekst,
   ;; a potem przybliza do miejsca konfliktu.
-  (if conflict
-    (progn
+  (if conflict 
+    (progn 
       (setq pt (car conflict))
       (setq srcObj (nth 2 conflict))
       (setq txtObj (nth 3 conflict))
       (setq ss (ssadd))
-      (foreach obj (list srcObj txtObj)
-        (if obj
-          (progn
+      (foreach obj (list srcObj txtObj) 
+        (if obj 
+          (progn 
             (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
-            (if (and (not (vl-catch-all-error-p en)) en (entget en))
+            (if (and (not (vl-catch-all-error-p en)) en (entget en)) 
               (ssadd en ss)
             )
           )
         )
       )
-      (if (> (sslength ss) 0)
+      (if (> (sslength ss) 0) 
         (sssetfirst nil ss)
       )
       (geocad-export-show-point pt)
@@ -280,242 +627,586 @@
 ;; --- GŁÓWNA KOMENDA EKSPORTU ---  
 ;; ==========================================  
 
-(defun c:EKSPORT_PIKIET_V22 ( / ss i ent obj type c-pts c-blks c-lines c-solids c-arcs c-circles c-txt-z c-txt-id found-tags pts-data txt-list detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id status filename f u-keys dupes pk pt x y z nr m-z m-id c-z c-id dists d-edge d-center t-val cat b-tags z-tags txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag z_tag auto_start count-exp run-analysis unique-pts d_tol d_tol_str renum_all fix_dupes auto_start_str accepted-pts used-ids is-dupe needs_new_id z_offset z_offset_str export_format export-lines export-line z_conflict_mode conflict-items conflict_index geom-has-z own-z near-z-count nearest-z nearest-z-object att)
+(defun c:EKSPORT_PIKIET_V22 (/ ss i ent obj type c-pts c-blks c-lines c-solids c-arcs 
+                             c-circles c-txt-z c-txt-id found-tags pts-data txt-list 
+                             detected-sys sys-warn tags-str dcl-file dcl-fn dcl-id 
+                             status filename f u-keys dupes pk pt x y z nr m-z m-id 
+                             c-z c-id dists d-edge d-center t-val cat b-tags z-tags 
+                             txt_rad geo_mode dupe_mode solid_mode auto_pref blk_tag 
+                             z_tag auto_start count-exp run-analysis unique-pts d_tol 
+                             d_tol_str renum_all fix_dupes auto_start_str accepted-pts 
+                             used-ids is-dupe needs_new_id z_offset z_offset_str 
+                             export_format export-lines export-line z_conflict_mode 
+                             conflict-items conflict_index geom-has-z own-z 
+                             near-z-count nearest-z nearest-z-object att
+                            ) 
 
-  (setq old-err *error* *error* geocad-exp-err f nil)   
+  (setq old-err *error*
+        *error* geocad-exp-err
+        f       nil
+  )
 
   ;; Dodano CIRCLE do filtra wyboru
-  (setq ss (ssget '((0 . "POINT,INSERT,TEXT,MTEXT,LINE,LWPOLYLINE,POLYLINE,SOLID,ARC,CIRCLE"))))   
-  (if (not ss) (exit))   
+  (setq ss (ssget '((0 . "POINT,INSERT,TEXT,MTEXT,LINE,LWPOLYLINE,POLYLINE,SOLID,ARC,CIRCLE"))))
+  (if (not ss) (exit))
 
-  (princ "\nAnaliza geometrii... prosze czekac.")  
+  (princ "\nAnaliza geometrii... prosze czekac.")
 
-  ;; 1. GROMADZENIE DANYCH  
-  (setq i 0 c-pts 0 c-blks 0 c-lines 0 c-arcs 0 c-circles 0 c-solids 0 c-txt-z 0 c-txt-id 0)  
-  (setq pts-data '() txt-list '() found-tags '())  
+  ;; 1. GROMADZENIE DANYCH
+  (setq i         0
+        c-pts     0
+        c-blks    0
+        c-lines   0
+        c-arcs    0
+        c-circles 0
+        c-solids  0
+        c-txt-z   0
+        c-txt-id  0
+  )
+  (setq pts-data   '()
+        txt-list   '()
+        found-tags '()
+  )
 
-  (while (< i (sslength ss))   
-    (setq ent (ssname ss i) obj (vlax-ename->vla-object ent) type (vla-get-ObjectName obj))   
-    (cond   
-      ((= type "AcDbPoint") (setq c-pts (1+ c-pts)) (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data)))   
-      ((= type "AcDbBlockReference")    
-       (setq c-blks (1+ c-blks))   
-       (if (= (vla-get-HasAttributes obj) :vlax-true)   
-         (foreach att (vlax-invoke obj 'GetAttributes) (setq tstr (strcase (vla-get-TagString att))) (if (not (member tstr found-tags)) (setq found-tags (cons tstr found-tags)))))  
-       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data)))   
-      ((member type '("AcDbText" "AcDbMText"))   
-       (if (not (vl-catch-all-error-p (vl-catch-all-apply 'vla-GetBoundingBox (list obj 'minPt 'maxPt))))  
-         (progn  
-           (setq t-val (vla-get-TextString obj) cat (categorize-text t-val))  
-           (if (= cat "Z") (setq c-txt-z (1+ c-txt-z)) (setq c-txt-id (1+ c-txt-id)))  
-           (setq txt-list (cons (list (vlax-safearray->list minPt) (vlax-safearray->list maxPt) t-val cat obj) txt-list)))))
+  (while (< i (sslength ss)) 
+    (setq ent  (ssname ss i)
+          obj  (vlax-ename->vla-object ent)
+          type (vla-get-ObjectName obj)
+    )
+    (cond 
+      ((= type "AcDbPoint")
+       (setq c-pts (1+ c-pts))
+       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data))
+      )
+      ((= type "AcDbBlockReference")
+       (setq c-blks (1+ c-blks))
+       (if (= (vla-get-HasAttributes obj) :vlax-true) 
+         (foreach att (vlax-invoke obj 'GetAttributes) 
+           (setq tstr (strcase (vla-get-TagString att)))
+           (if (not (member tstr found-tags)) 
+             (setq found-tags (cons tstr found-tags))
+           )
+         )
+       )
+       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data))
+      )
+      ((member type '("AcDbText" "AcDbMText"))
+       (if 
+         (not 
+           (vl-catch-all-error-p 
+             (vl-catch-all-apply 'vla-GetBoundingBox (list obj 'minPt 'maxPt))
+           )
+         )
+         (progn 
+           (setq t-val (vla-get-TextString obj)
+                 cat   (categorize-text t-val)
+           )
+           (if (= cat "Z") 
+             (setq c-txt-z (1+ c-txt-z))
+             (setq c-txt-id (1+ c-txt-id))
+           )
+           (setq txt-list (cons 
+                            (list (vlax-safearray->list minPt) 
+                                  (vlax-safearray->list maxPt)
+                                  t-val
+                                  cat
+                                  obj
+                            )
+                            txt-list
+                          )
+           )
+         )
+       )
+      )
 
       ;; OKRĄG - do analizy trafia środek okręgu
       ((= type "AcDbCircle")
        (setq c-circles (1+ c-circles))
-       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data)))
+       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data))
+      )
 
-      ((= type "AcDbSolid")   
-       (setq c-solids (1+ c-solids))   
-       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data)))   
-      (t   
-       (if (= type "AcDbArc") (setq c-arcs (1+ c-arcs)) (setq c-lines (1+ c-lines)))  
-       (foreach p (extract-v22 obj "1") (setq pts-data (cons (list p obj) pts-data))))  
-    )   
-    (setq i (1+ i))   
-  )   
+      ((= type "AcDbSolid")
+       (setq c-solids (1+ c-solids))
+       (setq pts-data (cons (list (car (extract-v22 obj "1")) obj) pts-data))
+      )
+      (t
+       (if (= type "AcDbArc") 
+         (setq c-arcs (1+ c-arcs))
+         (setq c-lines (1+ c-lines))
+       )
+       (foreach p (extract-v22 obj "1") 
+         (setq pts-data (cons (list p obj) pts-data))
+       )
+      )
+    )
+    (setq i (1+ i))
+  )
 
-  ;; FILTROWANIE UNIKALNYCH PUNKTÓW DO RAPORTU  
-  (setq u-keys '() unique-pts '() dupes 0)  
-  (foreach p pts-data   
-    (setq pk (strcat (rtos (caar p) 2 3) "_" (rtos (cadar p) 2 3)))   
-    (if (not (member pk u-keys))  
-      (progn (setq u-keys (cons pk u-keys) unique-pts (cons p unique-pts)))  
-      (setq dupes (1+ dupes))  
-    )  
-  )  
+  ;; FILTROWANIE UNIKALNYCH PUNKTÓW DO RAPORTU
+  (setq u-keys     '()
+        unique-pts '()
+        dupes      0
+  )
+  (foreach p pts-data 
+    (setq pk (strcat (rtos (caar p) 2 3) "_" (rtos (cadar p) 2 3)))
+    (if (not (member pk u-keys)) 
+      (progn 
+        (setq u-keys     (cons pk u-keys)
+              unique-pts (cons p unique-pts)
+        )
+      )
+      (setq dupes (1+ dupes))
+    )
+  )
 
-  (if unique-pts   
-    (progn (setq res1 (detect-epsg (car (nth 0 unique-pts))) res2 (detect-epsg (car (nth (/ (length unique-pts) 2) unique-pts))) res3 (detect-epsg (car (last unique-pts))))  
-           (if (and (= res1 res2) (= res2 res3)) (setq detected-sys res1 sys-warn nil) (setq detected-sys "ALARM: NIEZGODNOŚĆ UKŁADÓW!" sys-warn T)))  
-    (setq detected-sys "Brak punktow" sys-warn nil))  
+  (if unique-pts 
+    (progn 
+      (setq res1 (detect-epsg (car (nth 0 unique-pts)))
+            res2 (detect-epsg (car (nth (/ (length unique-pts) 2) unique-pts)))
+            res3 (detect-epsg (car (last unique-pts)))
+      )
+      (if (and (= res1 res2) (= res2 res3)) 
+        (setq detected-sys res1
+              sys-warn     nil
+        )
+        (setq detected-sys "ALARM: NIEZGODNOŚĆ UKŁADÓW!"
+              sys-warn     T
+        )
+      )
+    )
+    (setq detected-sys "Brak punktow"
+          sys-warn     nil
+    )
+  )
 
-  (setq tags-str "")   
-  (if found-tags   
-    (progn (foreach tg (reverse found-tags) (setq tags-str (strcat tags-str tg ", "))) (setq tags-str (strcat "[" (substr tags-str 1 (- (strlen tags-str) 2)) "]")))   
-    (setq tags-str "Brak"))   
+  (setq tags-str "")
+  (if found-tags 
+    (progn 
+      (foreach tg (reverse found-tags) (setq tags-str (strcat tags-str tg ", ")))
+      (setq tags-str (strcat "[" (substr tags-str 1 (- (strlen tags-str) 2)) "]"))
+    )
+    (setq tags-str "Brak")
+  )
 
   ;; Funkcja radaru dzialajaca TYLKO na unikalnych punktach.
   ;; Buduje tez liste konfliktow Z widoczna w oknie eksportu.
-  (setq z_conflict_mode "z_keep" conflict_index 0)
-  (setq run-analysis (lambda (rad / z-hit id-hit conflict-hit has-z has-id p-idx desc)
-    (setq z-hit 0 id-hit 0 conflict-hit 0 conflict-items '() p-idx 1)
-    (foreach p unique-pts
-      (setq pt (car p) obj (cadr p) has-z nil has-id nil near-z-count 0 nearest-z nil nearest-z-object nil)
-      (setq geom-has-z (and (caddr pt) (> (abs (caddr pt)) 0.001)))
-      (setq own-z geom-has-z)
-      (if (= (vla-get-ObjectName obj) "AcDbBlockReference")
-        (foreach att (vlax-invoke obj 'GetAttributes)
-          (if (member (strcase (vla-get-TagString att)) '("H" "Z" "RZEDNA"))
-            (setq own-z T)
-          )
-        )
-      )
-      (foreach t-i txt-list
-        (setq dists (get-dist-to-txt pt t-i))
-        (if (<= (car dists) rad)
-          (progn
-            (if (= (nth 3 t-i) "Z")
-              (progn
-                (setq t-val (geocad-text-radar-z-value (nth 2 t-i)))
-                (if t-val
-                  (progn
-                    (setq near-z-count (1+ near-z-count))
-                    (if (or (not nearest-z) (< (cadr dists) (car nearest-z)))
-                      (setq nearest-z (list (cadr dists) t-val) nearest-z-object (nth 4 t-i))
-                    )
-                  )
-                )
-              )
-            )
-            (if (and (= (nth 3 t-i) "ID") (not has-id))
-              (setq has-id T id-hit (1+ id-hit))
-            )
-          )
-        )
-      )
-      (setq has-z (or own-z nearest-z))
-      (if has-z (setq z-hit (1+ z-hit)))
-      (if (and nearest-z (or own-z (> near-z-count 1)))
-        (progn
-          (setq conflict-hit (1+ conflict-hit))
-          (setq desc
-            (strcat
-              (itoa p-idx) ". X=" (rtos (car pt) 2 3)
-              " Y=" (rtos (cadr pt) 2 3)
-              " | obiekt Z=" (if geom-has-z (rtos (caddr pt) 2 3) (if own-z "atrybut" "brak"))
-              " | tekst Z=" (rtos (cadr nearest-z) 2 3)
-              " | tekstow=" (itoa near-z-count)
-            )
-          )
-          (setq conflict-items (append conflict-items (list (list pt desc obj nearest-z-object))))
-        )
-      )
-      (setq p-idx (1+ p-idx))
-    )
-    (set_tile "rep_z" (strcat "Dopasowano rzednych: " (itoa z-hit) " / " (itoa (length unique-pts)) " (konflikty: " (itoa conflict-hit) ")"))
-    (set_tile "rep_id" (strcat "Dopasowano numerow: " (itoa id-hit) " / " (itoa (length unique-pts))))
-    (start_list "z_conflicts")
-    (if conflict-items
-      (foreach ci conflict-items (add_list (cadr ci)))
-      (add_list "Brak konfliktow Z w aktualnym promieniu radaru.")
-    )
-    (end_list)
-    (set_tile "z_conflicts" "0")
-  ))
+  (setq z_conflict_mode "z_keep"
+        conflict_index  0
+  )
+  (setq run-analysis (lambda (rad / z-hit id-hit conflict-hit has-z has-id p-idx desc) 
+                       (setq z-hit          0
+                             id-hit         0
+                             conflict-hit   0
+                             conflict-items '()
+                             p-idx          1
+                       )
+                       (foreach p unique-pts 
+                         (setq pt               (car p)
+                               obj              (cadr p)
+                               has-z            nil
+                               has-id           nil
+                               near-z-count     0
+                               nearest-z        nil
+                               nearest-z-object nil
+                         )
+                         (setq geom-has-z (and (caddr pt) 
+                                               (> (abs (caddr pt)) 0.001)
+                                          )
+                         )
+                         (setq own-z geom-has-z)
+                         (if (= (vla-get-ObjectName obj) "AcDbBlockReference") 
+                           (foreach att (vlax-invoke obj 'GetAttributes) 
+                             (if 
+                               (member (strcase (vla-get-TagString att)) 
+                                       '("H" "Z" "RZEDNA")
+                               )
+                               (setq own-z T)
+                             )
+                           )
+                         )
+                         (foreach t-i txt-list 
+                           (setq dists (get-dist-to-txt pt t-i))
+                           (if (<= (car dists) rad) 
+                             (progn 
+                               (if (= (nth 3 t-i) "Z") 
+                                 (progn 
+                                   (setq t-val (geocad-text-radar-z-value 
+                                                 (nth 2 t-i)
+                                               )
+                                   )
+                                   (if t-val 
+                                     (progn 
+                                       (setq near-z-count (1+ near-z-count))
+                                       (if 
+                                         (or (not nearest-z) 
+                                             (< (cadr dists) (car nearest-z))
+                                         )
+                                         (setq nearest-z        (list (cadr dists) 
+                                                                      t-val
+                                                                )
+                                               nearest-z-object (nth 4 t-i)
+                                         )
+                                       )
+                                     )
+                                   )
+                                 )
+                               )
+                               (if (and (= (nth 3 t-i) "ID") (not has-id)) 
+                                 (setq has-id T
+                                       id-hit (1+ id-hit)
+                                 )
+                               )
+                             )
+                           )
+                         )
+                         (setq has-z (or own-z nearest-z))
+                         (if has-z (setq z-hit (1+ z-hit)))
+                         (if (and nearest-z (or own-z (> near-z-count 1))) 
+                           (progn 
+                             (setq conflict-hit (1+ conflict-hit))
+                             (setq desc (strcat 
+                                          (itoa p-idx)
+                                          ". X="
+                                          (rtos (car pt) 2 3)
+                                          " Y="
+                                          (rtos (cadr pt) 2 3)
+                                          " | obiekt Z="
+                                          (if geom-has-z 
+                                            (rtos (caddr pt) 2 3)
+                                            (if own-z "atrybut" "brak")
+                                          )
+                                          " | tekst Z="
+                                          (rtos (cadr nearest-z) 2 3)
+                                          " | tekstow="
+                                          (itoa near-z-count)
+                                        )
+                             )
+                             (setq conflict-items (append conflict-items 
+                                                          (list 
+                                                            (list pt 
+                                                                  desc
+                                                                  obj
+                                                                  nearest-z-object
+                                                            )
+                                                          )
+                                                  )
+                             )
+                           )
+                         )
+                         (setq p-idx (1+ p-idx))
+                       )
+                       (set_tile "rep_z" 
+                                 (strcat "Dopasowano rzednych: " 
+                                         (itoa z-hit)
+                                         " / "
+                                         (itoa (length unique-pts))
+                                         " (konflikty: "
+                                         (itoa conflict-hit)
+                                         ")"
+                                 )
+                       )
+                       (set_tile "rep_id" 
+                                 (strcat "Dopasowano numerow: " 
+                                         (itoa id-hit)
+                                         " / "
+                                         (itoa (length unique-pts))
+                                 )
+                       )
+                       (geocad-export-update-source-stats 
+                         pts-data
+                         txt-list
+                         rad
+                         (mapcar 
+                           'strcase
+                           (parse-tags 
+                             (get_tile "b_t")
+                           )
+                         )
+                         (mapcar 
+                           'strcase
+                           (parse-tags 
+                             (get_tile "z_t")
+                           )
+                         )
+                       )
+                       (start_list "z_conflicts")
+                       (if conflict-items 
+                         (foreach ci conflict-items (add_list (cadr ci)))
+                         (add_list "Brak konfliktow Z w aktualnym promieniu radaru.")
+                       )
+                       (end_list)
+                       (set_tile "z_conflicts" "0")
+                     )
+  )
 
-  ;; 2. DYNAMICZNE OKNO DCL  
-  (setq dcl-file (vl-filename-mktemp "geo10.dcl") dcl-fn (open dcl-file "w"))    
-  (write-line "Geo10 : dialog { label = \"Eksport V10 (Pelna Kontrola)\";" dcl-fn)    
+  ;; 2. DYNAMICZNE OKNO DCL
+  (setq dcl-file (vl-filename-mktemp "geo10.dcl")
+        dcl-fn   (open dcl-file "w")
+  )
+  (write-line "Geo10 : dialog { label = \"Eksport V10 (Pelna Kontrola)\";" dcl-fn)
   (write-line "  : row {" dcl-fn)
   (write-line "  : column {" dcl-fn)
-  (write-line "  : boxed_column { label = \"Analiza Przestrzenna (WCS)\";" dcl-fn)    
-  (write-line (strcat "    : text { label = \"Rozpoznany Uklad: " detected-sys "\"; }") dcl-fn)   
-  (if sys-warn (write-line "    : text { label = \"UWAGA: Wykryto rozbieznosci wspolrzednych!\"; }" dcl-fn))   
-  (write-line "  }" dcl-fn)   
+  (write-line "  : boxed_column { label = \"Analiza Przestrzenna (WCS)\";" dcl-fn)
+  (write-line 
+    (strcat "    : text { label = \"Rozpoznany Uklad: " detected-sys "\"; }")
+    dcl-fn
+  )
+  (if sys-warn 
+    (write-line "    : text { label = \"UWAGA: Wykryto rozbieznosci wspolrzednych!\"; }" 
+                dcl-fn
+    )
+  )
+  (write-line "  }" dcl-fn)
 
-  (write-line "  : row { " dcl-fn)  
-  (write-line "  : boxed_column { label = \"Wykryte Obiekty\";" dcl-fn)    
-  (if (> (+ c-pts c-blks) 0) (write-line (strcat "    : text { label = \"- Punkty/Bloki: " (itoa (+ c-pts c-blks)) "\"; }") dcl-fn))   
-  (if (> c-lines 0) (write-line (strcat "    : text { label = \"- Linie: " (itoa c-lines) "\"; }") dcl-fn))   
-  (if (> c-arcs 0) (write-line (strcat "    : text { label = \"- Luki: " (itoa c-arcs) "\"; }") dcl-fn))   
+  (write-line "  : row { " dcl-fn)
+  (write-line "  : boxed_column { label = \"Wykryte Obiekty\";" dcl-fn)
+  (write-line 
+    (strcat 
+      "    : text { label = \"- Natywne POINT: "
+      (itoa c-pts)
+      "\"; }"
+    )
+    dcl-fn
+  )
+
+  (write-line 
+    (strcat 
+      "    : text { label = \"- Bloki INSERT: "
+      (itoa c-blks)
+      "\"; }"
+    )
+    dcl-fn
+  )
+  (if (> c-lines 0) 
+    (write-line (strcat "    : text { label = \"- Linie: " (itoa c-lines) "\"; }") 
+                dcl-fn
+    )
+  )
+  (if (> c-arcs 0) 
+    (write-line (strcat "    : text { label = \"- Luki: " (itoa c-arcs) "\"; }") 
+                dcl-fn
+    )
+  )
 
   ;; Raport liczby okręgów
-  (if (> c-circles 0) (write-line (strcat "    : text { label = \"- Okregi: " (itoa c-circles) "\"; }") dcl-fn))   
+  (if (> c-circles 0) 
+    (write-line 
+      (strcat "    : text { label = \"- Okregi: " (itoa c-circles) "\"; }")
+      dcl-fn
+    )
+  )
 
-  (if (> c-solids 0) (write-line (strcat "    : text { label = \"- Bryly SOLID: " (itoa c-solids) "\"; }") dcl-fn))   
-  (write-line "  }" dcl-fn)   
+  (if (> c-solids 0) 
+    (write-line 
+      (strcat "    : text { label = \"- Bryly SOLID: " (itoa c-solids) "\"; }")
+      dcl-fn
+    )
+  )
+  (write-line "  }" dcl-fn)
 
-  (write-line "  : boxed_column { label = \"Teksty w strefie\";" dcl-fn)  
-  (write-line (strcat "    : text { label = \"- Liczby (Rzedne): " (itoa c-txt-z) "\"; }") dcl-fn)  
-  (write-line (strcat "    : text { label = \"- Opisy (Numery): " (itoa c-txt-id) "\"; }") dcl-fn)  
-  (write-line "  } }" dcl-fn)  
+  (write-line "  : boxed_column { label = \"Teksty w strefie\";" dcl-fn)
+  (write-line 
+    (strcat "    : text { label = \"- Liczby (Rzedne): " (itoa c-txt-z) "\"; }")
+    dcl-fn
+  )
+  (write-line 
+    (strcat "    : text { label = \"- Opisy (Numery): " (itoa c-txt-id) "\"; }")
+    dcl-fn
+  )
+  (write-line "  } }" dcl-fn)
 
-  (write-line "  : boxed_column { label = \"Raport Dopasowania (Na Zywo)\";" dcl-fn)  
-  (write-line "    : text { key = \"rep_z\"; value=\"...\"; }" dcl-fn)  
-  (write-line "    : text { key = \"rep_id\"; value=\"...\"; }" dcl-fn)  
-  (write-line "  }" dcl-fn)  
+  (write-line 
+    "  : boxed_column { label = \"Raport Dopasowania (Na Zywo)\";"
+    dcl-fn
+  )
 
-  (if (> c-solids 0)  
-    (progn (write-line "  : boxed_radio_row { label = \"Eksport Bryl SOLID\"; key = \"s_m\";" dcl-fn)   
-           (write-line "    : radio_button { key = \"1\"; label = \"Tylko P1 (Insertion)\"; value = \"1\"; }" dcl-fn)   
-           (write-line "    : radio_button { key = \"4\"; label = \"Wszystkie (P1-P4)\"; } }" dcl-fn)))  
+  ;; Dotychczasowy raport ogolny
+  (write-line 
+    "    : text { key = \"rep_z\"; value = \"...\"; width = 78; }"
+    dcl-fn
+  )
 
-  (write-line (strcat "  : boxed_column { label = \"Duplikaty Geometrii (Wstepnie znaleziono ok. " (itoa dupes) ")\";") dcl-fn)   
-  (write-line "    : radio_row { key = \"d_m\";" dcl-fn)   
-  (write-line "      : radio_button { key = \"rem\"; label = \"Usun punkty w promieniu ->\"; value = \"1\"; }" dcl-fn)   
-  (write-line "      : radio_button { key = \"keep\"; label = \"Eksportuj wszystkie\"; } " dcl-fn) 
-  (write-line "    }" dcl-fn)   
-  (write-line "    : row { : edit_box { key = \"d_tol\"; label = \"Promien szukania (tolerancja) [m]:\"; edit_width = 8; value = \"0.01\"; } }" dcl-fn)   
-  (write-line "  }" dcl-fn)   
+  (write-line 
+    "    : text { key = \"rep_id\"; value = \"...\"; width = 78; }"
+    dcl-fn
+  )
 
-  (write-line "  : boxed_column { label = \"Zarzadzanie Numeracja i Konfliktami ID\";" dcl-fn) 
-  (write-line "    : toggle { key = \"renum_all\"; label = \"Wymus NOWA numeracje dla WSZYSTKICH pikiet\"; value = \"0\"; }" dcl-fn) 
-  (write-line "    : toggle { key = \"fix_dupes\"; label = \"Automatycznie rozwiazuj konflikty (zmieniaj zduplikowane numery)\"; value = \"1\"; }" dcl-fn) 
-  (write-line "    : text { label = \"(Puste numery nadal otrzymaja identyfikator z prefiksem z ponizszego pola)\"; }" dcl-fn) 
-  (write-line "    : row { : edit_box { key = \"a_p\"; label = \"Prefiks auto:\"; edit_width = 8; value = \"P_\"; } : edit_box { key = \"a_s\"; label = \"Zacznij od nr:\"; edit_width = 8; value = \"1\"; } }" dcl-fn) 
-  (write-line "  }" dcl-fn) 
+  ;; Szczegoly natywnych POINT
+  (write-line 
+    "    : text { label = \"Natywne POINT\"; }"
+    dcl-fn
+  )
 
-  (write-line "  : boxed_column { label = \"Konfiguracja Radaru i Atrybutow\";" dcl-fn)    
-  (write-line (strcat "    : text { label = \"Znalezione Tagi blokow: " tags-str "\"; }") dcl-fn)   
-  (write-line "    : row { : edit_box { key = \"b_t\"; label = \"Tag NR:\"; edit_width = 6; value = \"NR, ID\"; } : edit_box { key = \"z_t\"; label = \"Tag Z:\"; edit_width = 6; value = \"H, Z\"; } }" dcl-fn)   
-  (write-line "    : row { : edit_box { key = \"t_r\"; label = \"Zasieg radaru tekstow [m]:\"; edit_width = 5; value = \"1.5\"; } : button { key = \"recalc\"; label = \"Odswiez Raport\"; } }" dcl-fn)   
-  (write-line "  }" dcl-fn)   
+  (write-line 
+    "    : text { key = \"rep_point_id_detail\"; value = \"...\"; width = 78; }"
+    dcl-fn
+  )
+
+  (write-line 
+    "    : text { key = \"rep_point_z_detail\"; value = \"...\"; width = 78; }"
+    dcl-fn
+  )
+
+  ;; Szczegoly blokow
+  (write-line 
+    "    : text { label = \"Bloki INSERT\"; }"
+    dcl-fn
+  )
+
+  (write-line 
+    "    : text { key = \"rep_block_id_detail\"; value = \"...\"; width = 78; }"
+    dcl-fn
+  )
+
+  (write-line 
+    "    : text { key = \"rep_block_z_detail\"; value = \"...\"; width = 78; }"
+    dcl-fn
+  )
+
+  (write-line "  }" dcl-fn)
+
+  (if (> c-solids 0) 
+    (progn 
+      (write-line "  : boxed_radio_row { label = \"Eksport Bryl SOLID\"; key = \"s_m\";" 
+                  dcl-fn
+      )
+      (write-line "    : radio_button { key = \"1\"; label = \"Tylko P1 (Insertion)\"; value = \"1\"; }" 
+                  dcl-fn
+      )
+      (write-line "    : radio_button { key = \"4\"; label = \"Wszystkie (P1-P4)\"; } }" 
+                  dcl-fn
+      )
+    )
+  )
+
+  (write-line 
+    (strcat "  : boxed_column { label = \"Duplikaty Geometrii (Wstepnie znaleziono ok. " 
+            (itoa dupes)
+            ")\";"
+    )
+    dcl-fn
+  )
+  (write-line "    : radio_row { key = \"d_m\";" dcl-fn)
+  (write-line "      : radio_button { key = \"rem\"; label = \"Usun punkty w promieniu ->\"; value = \"1\"; }" 
+              dcl-fn
+  )
+  (write-line "      : radio_button { key = \"keep\"; label = \"Eksportuj wszystkie\"; } " 
+              dcl-fn
+  )
+  (write-line "    }" dcl-fn)
+  (write-line "    : row { : edit_box { key = \"d_tol\"; label = \"Promien szukania (tolerancja) [m]:\"; edit_width = 8; value = \"0.01\"; } }" 
+              dcl-fn
+  )
+  (write-line "  }" dcl-fn)
+
+  (write-line "  : boxed_column { label = \"Zarzadzanie Numeracja i Konfliktami ID\";" 
+              dcl-fn
+  )
+  (write-line "    : toggle { key = \"renum_all\"; label = \"Wymus NOWA numeracje dla WSZYSTKICH pikiet\"; value = \"0\"; }" 
+              dcl-fn
+  )
+  (write-line "    : toggle { key = \"fix_dupes\"; label = \"Automatycznie rozwiazuj konflikty (zmieniaj zduplikowane numery)\"; value = \"1\"; }" 
+              dcl-fn
+  )
+  (write-line "    : text { label = \"(Puste numery nadal otrzymaja identyfikator z prefiksem z ponizszego pola)\"; }" 
+              dcl-fn
+  )
+  (write-line "    : row { : edit_box { key = \"a_p\"; label = \"Prefiks auto:\"; edit_width = 8; value = \"P_\"; } : edit_box { key = \"a_s\"; label = \"Zacznij od nr:\"; edit_width = 8; value = \"1\"; } }" 
+              dcl-fn
+  )
+  (write-line "  }" dcl-fn)
+
+  (write-line "  : boxed_column { label = \"Konfiguracja Radaru i Atrybutow\";" 
+              dcl-fn
+  )
+  (write-line 
+    (strcat "    : text { label = \"Znalezione Tagi blokow: " tags-str "\"; }")
+    dcl-fn
+  )
+  (write-line "    : row { : edit_box { key = \"b_t\"; label = \"Tag NR:\"; edit_width = 6; value = \"NR, ID\"; } : edit_box { key = \"z_t\"; label = \"Tag Z:\"; edit_width = 6; value = \"H, Z\"; } }" 
+              dcl-fn
+  )
+  (write-line "    : row { : edit_box { key = \"t_r\"; label = \"Zasieg radaru tekstow [m]:\"; edit_width = 5; value = \"1.5\"; } : button { key = \"recalc\"; label = \"Odswiez Raport\"; } }" 
+              dcl-fn
+  )
+  (write-line "  }" dcl-fn)
 
   ;; Format eksportu:
   ;; - TXT: zachowuje dotychczasowy eksport pikiet z numerem,
   ;; - PTS: prosta chmura punktow bez numerow, z liczba punktow w pierwszej linii.
-  (write-line "  : boxed_radio_row { label = \"Format eksportu\"; key = \"out_fmt\"; : radio_button { key = \"txt\"; label = \"TXT pikiety\"; value=\"1\";} : radio_button { key = \"pts\"; label = \"PTS chmura punktow\"; } }" dcl-fn)
+  (write-line "  : boxed_radio_row { label = \"Format eksportu\"; key = \"out_fmt\"; : radio_button { key = \"txt\"; label = \"TXT pikiety\"; value=\"1\";} : radio_button { key = \"pts\"; label = \"PTS chmura punktow\"; } }" 
+              dcl-fn
+  )
 
   ;; Offset Z dziala tylko na eksportowany plik TXT/PTS.
   ;; Nie modyfikuje punktow, blokow ani tekstow w DWG.
-  (write-line "  : boxed_column { label = \"Modyfikacja Z przy eksporcie\";" dcl-fn)
-  (write-line "    : row { : edit_box { key = \"z_off\"; label = \"Offset Z [m]:\"; edit_width = 8; value = \"0.000\"; } }" dcl-fn)
-  (write-line "    : text { label = \"Np. -0.800 obnizy kazda eksportowana rzedna o 0.8 m.\"; }" dcl-fn)
+  (write-line "  : boxed_column { label = \"Modyfikacja Z przy eksporcie\";" 
+              dcl-fn
+  )
+  (write-line "    : row { : edit_box { key = \"z_off\"; label = \"Offset Z [m]:\"; edit_width = 8; value = \"0.000\"; } }" 
+              dcl-fn
+  )
+  (write-line "    : text { label = \"Np. -0.800 obnizy kazda eksportowana rzedna o 0.8 m.\"; }" 
+              dcl-fn
+  )
   (write-line "  }" dcl-fn)
 
-  (write-line "  : boxed_radio_row { label = \"Kolejnosc Kolumn\"; key = \"g_m\"; : radio_button { key = \"geo\"; label = \"Geodezja (N,E,H)\"; value=\"1\";} : radio_button { key = \"cad\"; label = \"CAD (E,N,H)\"; } }" dcl-fn)   
+  (write-line "  : boxed_radio_row { label = \"Kolejnosc Kolumn\"; key = \"g_m\"; : radio_button { key = \"geo\"; label = \"Geodezja (N,E,H)\"; value=\"1\";} : radio_button { key = \"cad\"; label = \"CAD (E,N,H)\"; } }" 
+              dcl-fn
+  )
   (write-line "  }" dcl-fn)
   (write-line "  : boxed_column { label = \"Konflikty rzednych Z\";" dcl-fn)
-  (write-line "    : text { label = \"Obiekt ma wlasne Z i tekst Z obok albo kilka tekstow Z lezy przy jednym obiekcie.\"; }" dcl-fn)
-  (write-line "    : list_box { key = \"z_conflicts\"; height = 24; width = 72; }" dcl-fn)
-  (write-line "    : row { : button { key = \"zoom_conflict\"; label = \"Pokaz miejsce\"; } }" dcl-fn)
+  (write-line "    : text { label = \"Obiekt ma wlasne Z i tekst Z obok albo kilka tekstow Z lezy przy jednym obiekcie.\"; }" 
+              dcl-fn
+  )
+  (write-line "    : list_box { key = \"z_conflicts\"; height = 24; width = 72; }" 
+              dcl-fn
+  )
+  (write-line "    : row { : button { key = \"zoom_conflict\"; label = \"Pokaz miejsce\"; } }" 
+              dcl-fn
+  )
   (write-line "    : radio_row { key = \"z_conf_mode\";" dcl-fn)
-  (write-line "      : radio_button { key = \"z_keep\"; label = \"Zostaw Z obiektu\"; value = \"1\"; }" dcl-fn)
-  (write-line "      : radio_button { key = \"z_text\"; label = \"Nadpisz Z tekstem\"; }" dcl-fn)
+  (write-line "      : radio_button { key = \"z_keep\"; label = \"Zostaw Z obiektu\"; value = \"1\"; }" 
+              dcl-fn
+  )
+  (write-line "      : radio_button { key = \"z_text\"; label = \"Nadpisz Z tekstem\"; }" 
+              dcl-fn
+  )
   (write-line "    }" dcl-fn)
   (write-line "  }" dcl-fn)
   (write-line "  }" dcl-fn)
-  (write-line "  ok_cancel; }" dcl-fn) (close dcl-fn)    
+  (write-line "  ok_cancel; }" dcl-fn)
+  (close dcl-fn)
 
-  (setq dcl-id (load_dialog dcl-file)) (new_dialog "Geo10" dcl-id)   
+  (setq dcl-id (load_dialog dcl-file))
+  (new_dialog "Geo10" dcl-id)
 
-  (run-analysis 1.5)  
+  (run-analysis 1.5)
 
-  (action_tile "z_conflicts" "(setq conflict_index (atoi $value)) (if (= $reason 4) (if (and conflict-items (nth conflict_index conflict-items)) (geocad-export-show-conflict (nth conflict_index conflict-items))))")
-  (action_tile "zoom_conflict" "(if (not conflict_index) (setq conflict_index 0)) (if (and conflict-items (nth conflict_index conflict-items)) (geocad-export-show-conflict (nth conflict_index conflict-items)))")
-  (action_tile "recalc" "(setq z_conflict_mode (get_tile \"z_conf_mode\")) (run-analysis (atof (get_tile \"t_r\")))")
-  (action_tile "accept" "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\") export_format (get_tile \"out_fmt\") z_conflict_mode (get_tile \"z_conf_mode\")) (done_dialog 1)")
+  (action_tile "z_conflicts" 
+               "(setq conflict_index (atoi $value)) (if (= $reason 4) (if (and conflict-items (nth conflict_index conflict-items)) (geocad-export-show-conflict (nth conflict_index conflict-items))))"
+  )
+  (action_tile "zoom_conflict" 
+               "(if (not conflict_index) (setq conflict_index 0)) (if (and conflict-items (nth conflict_index conflict-items)) (geocad-export-show-conflict (nth conflict_index conflict-items)))"
+  )
+  (action_tile "recalc" 
+               "(setq z_conflict_mode (get_tile \"z_conf_mode\")) (run-analysis (atof (get_tile \"t_r\")))"
+  )
+  (action_tile "accept" 
+               "(setq geo_mode (get_tile \"g_m\") dupe_mode (get_tile \"d_m\") d_tol_str (get_tile \"d_tol\") solid_mode (if (get_tile \"s_m\") (get_tile \"s_m\") \"1\") auto_pref (get_tile \"a_p\") auto_start_str (get_tile \"a_s\") renum_all (get_tile \"renum_all\") fix_dupes (get_tile \"fix_dupes\") blk_tag (get_tile \"b_t\") z_tag (get_tile \"z_t\") txt_rad (atof (get_tile \"t_r\")) z_offset_str (get_tile \"z_off\") export_format (get_tile \"out_fmt\") z_conflict_mode (get_tile \"z_conf_mode\")) (done_dialog 1)"
+  )
 
-  (setq status (start_dialog)) (unload_dialog dcl-id) (vl-file-delete dcl-file)    
-  (if (= status 0) (exit))   
+  (setq status (start_dialog))
+  (unload_dialog dcl-id)
+  (vl-file-delete dcl-file)
+  (if (= status 0) (exit))
 
-  ;; Przygotowanie zmiennych DCL 
-  (setq d_tol (atof d_tol_str)) 
-  (setq auto_start (atoi auto_start_str)) 
-  (if (= auto_start 0) (setq auto_start 1)) 
+  ;; Przygotowanie zmiennych DCL
+  (setq d_tol (atof d_tol_str))
+  (setq auto_start (atoi auto_start_str))
+  (if (= auto_start 0) (setq auto_start 1))
 
-  (if (not export_format)
+  (if (not export_format) 
     (setq export_format "txt")
   )
 
@@ -524,144 +1215,242 @@
   (setq z_offset (distof (vl-string-translate "," "." z_offset_str)))
   (if (not z_offset) (setq z_offset 0.0))
 
-  (setq filename (get-native-windows-save-file export_format)) (if (not filename) (exit))   
-  (setq b-tags (mapcar 'strcase (parse-tags blk_tag)) z-tags (mapcar 'strcase (parse-tags z_tag)))   
+  (setq filename (get-native-windows-save-file export_format))
+  (if (not filename) (exit))
+  (setq b-tags (mapcar 'strcase (parse-tags blk_tag))
+        z-tags (mapcar 'strcase (parse-tags z_tag))
+  )
 
-  ;; 3. FINALNE WYCIĄGANIE  
-  (setq final-pts '() i 0)  
-  (while (< i (sslength ss))   
-    (setq ent (ssname ss i) obj (vlax-ename->vla-object ent) type (vla-get-ObjectName obj))  
-    (cond  
-      ((member type '("AcDbPoint" "AcDbBlockReference")) (setq final-pts (cons (list (car (extract-v22 obj "1")) obj) final-pts)))  
+  ;; 3. FINALNE WYCIĄGANIE
+  (setq final-pts '()
+        i         0
+  )
+  (while (< i (sslength ss)) 
+    (setq ent  (ssname ss i)
+          obj  (vlax-ename->vla-object ent)
+          type (vla-get-ObjectName obj)
+    )
+    (cond 
+      ((member type '("AcDbPoint" "AcDbBlockReference"))
+       (setq final-pts (cons (list (car (extract-v22 obj "1")) obj) final-pts))
+      )
 
       ;; OKRĄG - finalnie eksportowany jest tylko środek
-      ((= type "AcDbCircle") (setq final-pts (cons (list (car (extract-v22 obj "1")) obj) final-pts)))  
+      ((= type "AcDbCircle")
+       (setq final-pts (cons (list (car (extract-v22 obj "1")) obj) final-pts))
+      )
 
-      ((= type "AcDbSolid") (foreach p (extract-v22 obj solid_mode) (setq final-pts (cons (list p obj) final-pts))))  
-      ((member type '("AcDbLine" "AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline" "AcDbArc"))  
-       (foreach p (extract-v22 obj "1") (setq final-pts (cons (list p obj) final-pts))))  
-    )  
-    (setq i (1+ i))  
-  )  
+      ((= type "AcDbSolid")
+       (foreach p (extract-v22 obj solid_mode) 
+         (setq final-pts (cons (list p obj) final-pts))
+       )
+      )
+      ((member type 
+               '("AcDbLine" "AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline" 
+                 "AcDbArc"
+                )
+       )
+       (foreach p (extract-v22 obj "1") 
+         (setq final-pts (cons (list p obj) final-pts))
+       )
+      )
+    )
+    (setq i (1+ i))
+  )
 
-  ;; 4. ZAPIS Z INTELIGENTNYM ROZWIĄZYWANIEM KONFLIKTÓW 
+  ;; 4. ZAPIS Z INTELIGENTNYM ROZWIĄZYWANIEM KONFLIKTÓW
   ;; Linie zbieramy najpierw w pamieci, bo format PTS wymaga liczby punktow
   ;; w pierwszej linii pliku.
-  (setq count-exp 0 accepted-pts '() used-ids '() export-lines '())   
+  (setq count-exp    0
+        accepted-pts '()
+        used-ids     '()
+        export-lines '()
+  )
 
-  (foreach item (reverse final-pts)   
-    (setq pt (car item) obj (cadr item) x (car pt) y (cadr pt) z (caddr pt) nr "" f-z nil is-dupe nil)   
+  (foreach item (reverse final-pts) 
+    (setq pt      (car item)
+          obj     (cadr item)
+          x       (car pt)
+          y       (cadr pt)
+          z       (caddr pt)
+          nr      ""
+          f-z     nil
+          is-dupe nil
+    )
     (setq geom-has-z (and z (> (abs z) 0.001)))
 
-    ;; KONTROLA DUPLIKATÓW GEOMETRII (Z tolerancją użytkownika) 
-    (if (= dupe_mode "rem")  
+    ;; KONTROLA DUPLIKATÓW GEOMETRII (Z tolerancją użytkownika)
+    (if (= dupe_mode "rem") 
       (if (vl-some '(lambda (p) (< (dist-2d pt p) d_tol)) accepted-pts) 
-        (setq is-dupe T) 
-      ) 
-    ) 
+        (setq is-dupe T)
+      )
+    )
 
-    (if (not is-dupe)  
-      (progn  
-        (setq accepted-pts (cons pt accepted-pts))  
-        (if (not z) (setq z 0.0))   
+    (if (not is-dupe) 
+      (progn 
+        (setq accepted-pts (cons pt accepted-pts))
+        (if (not z) (setq z 0.0))
 
-        ;; POBIERANIE DANYCH Z BLOKU 
-        (if (= (vla-get-ObjectName obj) "AcDbBlockReference")   
-          (foreach att (vlax-invoke obj 'GetAttributes)   
-            (setq tstr (strcase (vla-get-TagString att)))   
-            (if (and (= renum_all "0") (member tstr b-tags)) (setq nr (vla-get-TextString att)))   
-            (if (member tstr z-tags) (setq z (atof (vl-string-translate "," "." (vla-get-TextString att))) f-z T))))   
+        ;; POBIERANIE DANYCH Z BLOKU
+        (if (= (vla-get-ObjectName obj) "AcDbBlockReference") 
+          (foreach att (vlax-invoke obj 'GetAttributes) 
+            (setq tstr (strcase (vla-get-TagString att)))
+            (if (and (= renum_all "0") (member tstr b-tags)) 
+              (setq nr (vla-get-TextString att))
+            )
+            (if (member tstr z-tags) 
+              (setq z   (atof 
+                          (vl-string-translate "," "." (vla-get-TextString att))
+                        )
+                    f-z T
+              )
+            )
+          )
+        )
 
-        ;; POBIERANIE DANYCH Z RADARU 
+        ;; POBIERANIE DANYCH Z RADARU
         (setq own-z (or f-z geom-has-z))
-        (setq m-z 9999.0 m-id 9999.0 c-z nil c-id "")   
-        (foreach t-i txt-list   
-          (setq dists (get-dist-to-txt pt t-i) d-edge (car dists) d-center (cadr dists))   
-          (if (<= d-edge txt_rad)   
-            (progn  
+        (setq m-z  9999.0
+              m-id 9999.0
+              c-z  nil
+              c-id ""
+        )
+        (foreach t-i txt-list 
+          (setq dists    (get-dist-to-txt pt t-i)
+                d-edge   (car dists)
+                d-center (cadr dists)
+          )
+          (if (<= d-edge txt_rad) 
+            (progn 
               ;; POBIERZ Z Z TEKSTU automatycznie tylko dla obiektow bez wlasnego Z.
               ;; Przy konflikcie obiekt Z vs tekst Z decyzja pochodzi z okna eksportu.
-              (if (and (= (nth 3 t-i) "Z") (or (not own-z) (= z_conflict_mode "z_text")) (< d-center m-z))
-                  (progn
-                    (setq t-val (geocad-text-radar-z-value (nth 2 t-i)))
-                    (if t-val
-                      (setq m-z d-center c-z t-val)
+              (if 
+                (and (= (nth 3 t-i) "Z") 
+                     (or (not own-z) (= z_conflict_mode "z_text"))
+                     (< d-center m-z)
+                )
+                (progn 
+                  (setq t-val (geocad-text-radar-z-value (nth 2 t-i)))
+                  (if t-val 
+                    (setq m-z d-center
+                          c-z t-val
                     )
                   )
+                )
               )
 
               ;; POBIERZ ID Z TEKSTU
-              (if (and (= renum_all "0") (= (nth 3 t-i) "ID") (= nr "") (< d-center m-id))   
-                  (setq m-id d-center c-id (nth 2 t-i)))  
-            )  
-          )  
-        )   
+              (if 
+                (and (= renum_all "0") 
+                     (= (nth 3 t-i) "ID")
+                     (= nr "")
+                     (< d-center m-id)
+                )
+                (setq m-id d-center
+                      c-id (nth 2 t-i)
+                )
+              )
+            )
+          )
+        )
 
         ;; Zastosuj wyłapane Z z tekstu
-        (if c-z (setq z c-z))  
+        (if c-z (setq z c-z))
 
         ;; Offset Z stosujemy dopiero po wszystkich metodach odczytu rzednej.
         ;; Zmieniamy tylko wartosc zapisywana do TXT, nie geometrie w rysunku.
         (setq z (+ z z_offset))
 
-        (if (= nr "") (setq nr c-id)) 
+        (if (= nr "") (setq nr c-id))
 
-        ;; KONTROLA ID (Brak numeru, wymuszenie nowej numeracji lub konflikt) 
-        (setq needs_new_id nil) 
-        (if (= nr "") (setq needs_new_id T)) 
-        (if (= renum_all "1") (setq needs_new_id T)) 
-        (if (and (= fix_dupes "1") (member nr used-ids)) (setq needs_new_id T)) 
+        ;; KONTROLA ID (Brak numeru, wymuszenie nowej numeracji lub konflikt)
+        (setq needs_new_id nil)
+        (if (= nr "") (setq needs_new_id T))
+        (if (= renum_all "1") (setq needs_new_id T))
+        (if (and (= fix_dupes "1") (member nr used-ids)) (setq needs_new_id T))
 
         (if needs_new_id 
           (progn 
-            (setq nr (strcat auto_pref (itoa auto_start)) auto_start (1+ auto_start)) 
-            ;; Pętla upewniająca się, że nowy numer nie koliduje 
+            (setq nr         (strcat auto_pref (itoa auto_start))
+                  auto_start (1+ auto_start)
+            )
+            ;; Pętla upewniająca się, że nowy numer nie koliduje
             (while (member nr used-ids) 
-              (setq nr (strcat auto_pref (itoa auto_start)) auto_start (1+ auto_start)) 
-            ) 
-          ) 
-        ) 
-        (setq used-ids (cons nr used-ids)) ; Zapisanie wykorzystanego numeru do pamięci 
+              (setq nr         (strcat auto_pref (itoa auto_start))
+                    auto_start (1+ auto_start)
+              )
+            )
+          )
+        )
+        (setq used-ids (cons nr used-ids)) ; Zapisanie wykorzystanego numeru do pamięci
 
-        (if (= export_format "pts")
+        (if (= export_format "pts") 
           ;; PTS: prosta chmura punktow bez numeru.
           ;; Kolejnosc wspolrzednych nadal respektuje wybor Geodezja/CAD.
-          (if (= geo_mode "geo")
-            (setq export-line (strcat (format-coord y) " " (format-coord x) " " (format-coord z)))
-            (setq export-line (strcat (format-coord x) " " (format-coord y) " " (format-coord z)))
+          (if (= geo_mode "geo") 
+            (setq export-line (strcat (format-coord y) 
+                                      " "
+                                      (format-coord x)
+                                      " "
+                                      (format-coord z)
+                              )
+            )
+            (setq export-line (strcat (format-coord x) 
+                                      " "
+                                      (format-coord y)
+                                      " "
+                                      (format-coord z)
+                              )
+            )
           )
 
           ;; TXT: dotychczasowy eksport pikiet z numerem.
-          (if (= geo_mode "geo")
-            (setq export-line (strcat nr " " (format-coord y) " " (format-coord x) " " (format-coord z)))
-            (setq export-line (strcat nr " " (format-coord x) " " (format-coord y) " " (format-coord z)))
+          (if (= geo_mode "geo") 
+            (setq export-line (strcat nr 
+                                      " "
+                                      (format-coord y)
+                                      " "
+                                      (format-coord x)
+                                      " "
+                                      (format-coord z)
+                              )
+            )
+            (setq export-line (strcat nr 
+                                      " "
+                                      (format-coord x)
+                                      " "
+                                      (format-coord y)
+                                      " "
+                                      (format-coord z)
+                              )
+            )
           )
         )
 
         (setq export-lines (cons export-line export-lines))
-        (setq count-exp (1+ count-exp))   
-      )  
-    )  
-  )   
+        (setq count-exp (1+ count-exp))
+      )
+    )
+  )
 
   (setq export-lines (reverse export-lines))
   (setq f (open filename "w"))
 
-  (if (= export_format "pts")
+  (if (= export_format "pts") 
     (write-line (itoa count-exp) f)
   )
 
-  (foreach export-line export-lines
+  (foreach export-line export-lines 
     (write-line export-line f)
   )
 
-  (close f)   
-  (setq f nil)  
-  (alert
-    (strcat
+  (close f)
+  (setq f nil)
+  (alert 
+    (strcat 
       "Sukces!\nZapisano: "
       (itoa count-exp)
-      (if (= export_format "pts")
+      (if (= export_format "pts") 
         " punktow PTS."
         " pikiet TXT."
       )
@@ -673,8 +1462,9 @@
       (rtos z_offset 2 3)
       " m"
     )
-  )   
-  (princ)   
+  )
+  (princ)
 )   
 
-(princ "\nKomenda: EKSPORT_PIKIET_V22") (princ)
+(princ "\nKomenda: EKSPORT_PIKIET_V22")
+(princ)
