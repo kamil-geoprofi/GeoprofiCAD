@@ -384,18 +384,32 @@
 ;; TEKSTY ZEWNATRZNE - RADAR
 ;; ======================================================
 
-(defun gp-exp-point-value-to-list (value / raw)
+(defun gp-exp-point-value-to-list (value / raw converted)
+  ;; Nie uzywamy (type value), poniewaz dynamiczna zmienna o nazwie
+  ;; type moglaby przeslonic wbudowana funkcje TYPE w AutoLISP-ie.
   (cond
     ((vl-catch-all-error-p value) nil)
-    ((= (type value) 'VARIANT)
-     (setq raw (vlax-variant-value value))
-     (gp-exp-point-value-to-list raw)
+    ((listp value) value)
+    (T
+     (setq raw
+       (vl-catch-all-apply
+         'vlax-variant-value
+         (list value)
+       )
+     )
+     (if (not (vl-catch-all-error-p raw))
+       (gp-exp-point-value-to-list raw)
+       (progn
+         (setq converted
+           (vl-catch-all-apply
+             'vlax-safearray->list
+             (list value)
+           )
+         )
+         (if (vl-catch-all-error-p converted) nil converted)
+       )
+     )
     )
-    ((= (type value) 'SAFEARRAY)
-     (vlax-safearray->list value)
-    )
-    ((= (type value) 'LIST) value)
-    (T nil)
   )
 )
 
@@ -419,7 +433,7 @@
   (if
     (or
       (vl-catch-all-error-p value)
-      (not (member (type value) '(INT REAL)))
+      (not (numberp value))
     )
     fallback
     value
@@ -816,19 +830,36 @@
 ;; ATRYBUTY BLOKOW
 ;; ======================================================
 
-(defun gp-exp-value-to-list (value / raw)
+(defun gp-exp-value-to-list (value / raw converted)
+  ;; Bez bezposredniego wywolania TYPE - patrz gp-exp-point-value-to-list.
   (cond
     ((vl-catch-all-error-p value) '())
-    ((= (type value) 'VARIANT)
-     (setq raw (vlax-variant-value value))
-     (gp-exp-value-to-list raw)
-    )
-    ((= (type value) 'SAFEARRAY)
-     (vlax-safearray->list value)
-    )
-    ((listp value) value)
     ((not value) '())
-    (T (list value))
+    ((listp value) value)
+    (T
+     (setq raw
+       (vl-catch-all-apply
+         'vlax-variant-value
+         (list value)
+       )
+     )
+     (if (not (vl-catch-all-error-p raw))
+       (gp-exp-value-to-list raw)
+       (progn
+         (setq converted
+           (vl-catch-all-apply
+             'vlax-safearray->list
+             (list value)
+           )
+         )
+         (if
+           (vl-catch-all-error-p converted)
+           (list value)
+           converted
+         )
+       )
+     )
+    )
   )
 )
 
