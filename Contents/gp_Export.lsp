@@ -1784,6 +1784,120 @@
   (strcat prefix (itoa number))
 )
 
+(defun gp-exp-id-key (value)
+  ;; Klucz porownawczy ID: bez znaczenia wielkosci liter i spacji brzegowych.
+  (if (gp-exp-nonempty-p value)
+    (strcase (gp-exp-trim value))
+    nil
+  )
+)
+
+(defun gp-exp-make-id-entry (value source radar-entry)
+  ;; Wspolna struktura wpisu ID. Zrodlo pozostaje oryginalne nawet wtedy,
+  ;; gdy duplikat dostanie suffix (1), (2), ...
+  (list
+    (cons 'value value)
+    (cons 'source source)
+    (cons 'text-object
+      (if (equal source "RADAR")
+        (cdr (assoc 'text-object radar-entry))
+        nil
+      )
+    )
+    (cons 'ambiguous
+      (if (equal source "RADAR")
+        (cdr (assoc 'ambiguous radar-entry))
+        nil
+      )
+    )
+    (cons 'reassigned
+      (if (equal source "RADAR")
+        (cdr (assoc 'reassigned radar-entry))
+        nil
+      )
+    )
+    (cons 'candidate-count
+      (if (equal source "RADAR")
+        (cdr (assoc 'candidate-count radar-entry))
+        0
+      )
+    )
+    (cons 'match-score
+      (if (equal source "RADAR")
+        (cdr (assoc 'match-score radar-entry))
+        nil
+      )
+    )
+    (cons 'original-id nil)
+    (cons 'duplicate-renamed nil)
+  )
+)
+
+(defun gp-exp-build-id-index
+  (records id-map / counts labels occupied groups duplicate-records record rid entry value key current pair)
+  ;; Buduje indeks wszystkich znalezionych ID przed numeracja AUTO.
+  ;; Wynik:
+  ;; (counts labels occupied-keys duplicate-groups duplicate-records)
+  (setq counts '()
+        labels '()
+        occupied '()
+        groups 0
+        duplicate-records 0)
+
+  (foreach record records
+    (setq rid (gp-exp-record-get record 'rid)
+          entry (gp-exp-map-get id-map rid)
+          value (if entry (cdr (assoc 'value entry)) nil)
+          key (gp-exp-id-key value))
+
+    (if key
+      (progn
+        (setq current (gp-exp-map-get counts key))
+        (setq counts
+          (gp-exp-map-set counts key (1+ (if current current 0)))
+        )
+
+        (if (not (gp-exp-map-get labels key))
+          (setq labels
+            (gp-exp-map-set labels key (gp-exp-trim value))
+          )
+        )
+
+        (if (not (member key occupied))
+          (setq occupied (cons key occupied))
+        )
+      )
+    )
+  )
+
+  (foreach pair counts
+    (if (> (cdr pair) 1)
+      (setq groups (1+ groups)
+            duplicate-records (+ duplicate-records (cdr pair)))
+    )
+  )
+
+  (list counts labels occupied groups duplicate-records)
+)
+
+(defun gp-exp-allocate-auto-id
+  (prefix next-number occupied / value key)
+  ;; Zwraca: (nowe-id nastepny-licznik nowa-lista-zajetych-kluczy).
+  ;; AUTO nie moze zajac nazwy, ktora juz istnieje w danych zrodlowych
+  ;; ani nazwy wygenerowanej przy rozroznianiu duplikatow.
+  (setq value (gp-exp-auto-id prefix next-number)
+        next-number (1+ next-number)
+        key (gp-exp-id-key value))
+
+  (while (member key occupied)
+    (setq value (gp-exp-auto-id prefix next-number)
+          next-number (1+ next-number)
+          key (gp-exp-id-key value))
+  )
+
+  (list value next-number (cons key occupied))
+)
+
 (defun gp-exp-resolve-records
   (
     records texts radius id-tags z-tags unique-texts z-mode
@@ -1791,9 +1905,13 @@
     /
     base-map record rid base
     radar-id-map radar-z-map radar-z-candidate-map
-    final-id-map final-z-map
-    used-ids next-auto raw-id raw-source radar-entry
-    raw-z z-source z-entry id-value
+    raw-id-map final-id-map final-z-map
+    raw-id raw-source radar-entry raw-entry
+    id-index id-counts id-labels occupied-id-keys
+    duplicate-groups duplicate-records duplicate-next-map
+    key count base-id suffix candidate candidate-key
+    allocation next-auto id-value
+    raw-z z-source z-entry
     conflicts conflict-count pt obj nearest-z
     z-texts candidates near-info
   )
@@ -1834,10 +1952,10 @@
   )
   (setq radar-z-candidate-map *gp-exp-last-radar-candidate-map*)
 
-  ;; 3. Finalne ID: baza/radar -> auto -> naprawa duplikatow.
-  (setq final-id-map '()
-        used-ids '()
-        next-auto auto-start)
+  ;; 3. Najpierw zbieramy surowe ID wszystkich rekordow.
+  ;; Niczego jeszcze nie numerujemy AUTO - dzieki temu AUTO zna wszystkie
+  ;; prawdziwe nazwy i nie zabierze numeru znalezionemu pozniej ID.
+  (setq raw-id-map '())
 
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
@@ -1846,8 +1964,7 @@
           raw-id nil
           raw-source nil)
 
-    (if (= renum-all "1")
-      (setq raw-id nil)
+    (if (/= renum-all "1")
       (cond
         ((cdr (assoc 'id base))
          (setq raw-id (cdr (assoc 'id base))
@@ -1860,68 +1977,152 @@
       )
     )
 
-    (if
-      (or
-        (not (gp-exp-nonempty-p raw-id))
-        (and (= fix-dupes "1") (member raw-id used-ids))
-      )
-      (progn
-        (setq id-value (gp-exp-auto-id auto-prefix next-auto))
-        (setq next-auto (1+ next-auto))
-        (while (member id-value used-ids)
-          (setq id-value (gp-exp-auto-id auto-prefix next-auto))
-          (setq next-auto (1+ next-auto))
-        )
-        (setq raw-id id-value
-              raw-source "AUTO")
-      )
-    )
-
-    (setq used-ids (cons raw-id used-ids))
-    (setq final-id-map
-      (cons
-        (cons rid
-          (list
-            (cons 'value raw-id)
-            (cons 'source raw-source)
-            (cons 'text-object
-              (if (= raw-source "RADAR")
-                (cdr (assoc 'text-object radar-entry))
-                nil
-              )
-            )
-            (cons 'ambiguous
-              (if (= raw-source "RADAR")
-                (cdr (assoc 'ambiguous radar-entry))
-                nil
-              )
-            )
-            (cons 'reassigned
-              (if (= raw-source "RADAR")
-                (cdr (assoc 'reassigned radar-entry))
-                nil
-              )
-            )
-            (cons 'candidate-count
-              (if (= raw-source "RADAR")
-                (cdr (assoc 'candidate-count radar-entry))
-                0
-              )
-            )
-            (cons 'match-score
-              (if (= raw-source "RADAR")
-                (cdr (assoc 'match-score radar-entry))
-                nil
-              )
-            )
-          )
-        )
-        final-id-map
+    (setq raw-id-map
+      (gp-exp-map-set
+        raw-id-map
+        rid
+        (gp-exp-make-id-entry raw-id raw-source radar-entry)
       )
     )
   )
 
-  ;; 4. Finalne Z.
+  ;; 4. Finalne ID.
+  ;; - nowa numeracja wszystkich: AUTO dla kazdego rekordu,
+  ;; - normalny tryb: najpierw rozrozniamy powtarzajace sie ID,
+  ;;   dopiero potem nadajemy AUTO rekordom bez ID.
+  (setq final-id-map '()
+        next-auto auto-start
+        duplicate-groups 0
+        duplicate-records 0)
+
+  (if (= renum-all "1")
+    (progn
+      (setq occupied-id-keys '())
+
+      (foreach record records
+        (setq rid (gp-exp-record-get record 'rid)
+              allocation
+                (gp-exp-allocate-auto-id
+                  auto-prefix
+                  next-auto
+                  occupied-id-keys)
+              id-value (nth 0 allocation)
+              next-auto (nth 1 allocation)
+              occupied-id-keys (nth 2 allocation))
+
+        (setq final-id-map
+          (gp-exp-map-set
+            final-id-map
+            rid
+            (gp-exp-make-id-entry id-value "AUTO" nil)
+          )
+        )
+      )
+    )
+
+    (progn
+      ;; Indeks powstaje ze wszystkich ID z atrybutow, tekstow blokow i radaru.
+      (setq id-index (gp-exp-build-id-index records raw-id-map)
+            id-counts (nth 0 id-index)
+            id-labels (nth 1 id-index)
+            occupied-id-keys (nth 2 id-index)
+            duplicate-groups (nth 3 id-index)
+            duplicate-records (nth 4 id-index)
+            duplicate-next-map '())
+
+      ;; 4a. Rozroznienie prawdziwych duplikatow:
+      ;; P12, P12, P12 -> P12(1), P12(2), P12(3).
+      ;; Kolejnosc jest zgodna z kolejnoscia rekordow.
+      (foreach record records
+        (setq rid (gp-exp-record-get record 'rid)
+              raw-entry (gp-exp-map-get raw-id-map rid)
+              raw-id (if raw-entry (cdr (assoc 'value raw-entry)) nil)
+              key (gp-exp-id-key raw-id)
+              count (if key (gp-exp-map-get id-counts key) nil))
+
+        (if
+          (and
+            (= fix-dupes "1")
+            key
+            count
+            (> count 1)
+          )
+          (progn
+            (setq base-id (gp-exp-map-get id-labels key)
+                  suffix (gp-exp-map-get duplicate-next-map key))
+            (if (not suffix) (setq suffix 1))
+
+            (setq candidate
+                    (strcat base-id "(" (itoa suffix) ")")
+                  candidate-key (gp-exp-id-key candidate))
+
+            ;; Jezeli np. P12(1) juz istnieje jako prawdziwe ID,
+            ;; omijamy je i bierzemy pierwszy wolny suffix.
+            (while (member candidate-key occupied-id-keys)
+              (setq suffix (1+ suffix)
+                    candidate
+                      (strcat base-id "(" (itoa suffix) ")")
+                    candidate-key (gp-exp-id-key candidate))
+            )
+
+            (setq duplicate-next-map
+              (gp-exp-map-set duplicate-next-map key (1+ suffix))
+            )
+            (setq occupied-id-keys
+              (cons candidate-key occupied-id-keys)
+            )
+
+            (setq raw-entry
+              (gp-exp-map-set raw-entry 'original-id raw-id)
+            )
+            (setq raw-entry
+              (gp-exp-map-set raw-entry 'duplicate-renamed T)
+            )
+            (setq raw-entry
+              (gp-exp-map-set raw-entry 'value candidate)
+            )
+          )
+        )
+
+        (setq final-id-map
+          (gp-exp-map-set final-id-map rid raw-entry)
+        )
+      )
+
+      ;; 4b. Dopiero teraz AUTO dla rekordow bez znalezionego ID.
+      ;; Lista occupied-id-keys zawiera juz wszystkie ID zrodlowe i suffixy,
+      ;; wiec AUTO nie moze ich przypadkiem zajac.
+      (foreach record records
+        (setq rid (gp-exp-record-get record 'rid)
+              raw-entry (gp-exp-map-get final-id-map rid)
+              raw-id (if raw-entry (cdr (assoc 'value raw-entry)) nil))
+
+        (if (not (gp-exp-nonempty-p raw-id))
+          (progn
+            (setq allocation
+              (gp-exp-allocate-auto-id
+                auto-prefix
+                next-auto
+                occupied-id-keys)
+            )
+            (setq id-value (nth 0 allocation)
+                  next-auto (nth 1 allocation)
+                  occupied-id-keys (nth 2 allocation))
+
+            (setq final-id-map
+              (gp-exp-map-set
+                final-id-map
+                rid
+                (gp-exp-make-id-entry id-value "AUTO" nil)
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  ;; 5. Finalne Z.
   (setq final-z-map '())
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
@@ -1992,7 +2193,7 @@
     )
   )
 
-  ;; 5. Konflikty Z do raportu.
+  ;; 6. Konflikty Z do raportu.
   ;; Dla rekordow bez wlasnego Z wykorzystujemy juz zbudowana liste
   ;; kandydatow. Dodatkowy skan wykonujemy tylko dla obiektow z wlasnym Z
   ;; w trybie z_keep, bo takie rekordy nie uczestnicza w grafie radaru Z.
@@ -2067,6 +2268,10 @@
     (cons 'z-map final-z-map)
     (cons 'conflicts (reverse conflicts))
     (cons 'next-auto next-auto)
+    (cons 'duplicate-id-groups duplicate-groups)
+    (cons 'duplicate-id-records duplicate-records)
+    (cons 'duplicate-id-renamed
+      (if (= fix-dupes "1") duplicate-records 0))
   )
 )
 
@@ -2342,16 +2547,21 @@
   (write-line "        : text { label = \"Dla INSERT: atrybut -> geometria -> tekst w bloku -> tekst obok.\"; }" file)
   (write-line "      }" file)
 
-  (write-line "      : boxed_column { label = \"Duplikaty i numeracja\";" file)
-  (write-line "        : radio_row { key = \"d_m\";" file)
-  (write-line "          : radio_button { key = \"rem\"; label = \"Usun duplikaty XY\"; }" file)
+  (write-line "      : boxed_column { label = \"Duplikaty geometrii\";" file)
+  (write-line "        : radio_column { key = \"d_m\";" file)
   (write-line "          : radio_button { key = \"keep\"; label = \"Zostaw wszystkie\"; value = \"1\"; }" file)
+  (write-line "          : radio_button { key = \"rem\"; label = \"Usun duplikaty XY\"; }" file)
   (write-line "        }" file)
-  (write-line "        : edit_box { key = \"d_tol\"; label = \"Tolerancja XY [m]:\"; edit_width = 8; value = \"0.01\"; }" file)
+  (write-line "        : edit_box { key = \"d_tol\"; label = \"Tolerancja XY [m]:\"; edit_width = 8; value = \"0.01\"; is_enabled = false; }" file)
+  (write-line "      }" file)
+
+  (write-line "      : boxed_column { label = \"Numeracja ID\";" file)
   (write-line "        : toggle { key = \"renum_all\"; label = \"Nowa numeracja wszystkich\"; value = \"0\"; }" file)
-  (write-line "        : toggle { key = \"fix_dupes\"; label = \"Napraw duplikaty ID\"; value = \"1\"; }" file)
   (write-line "        : row { : edit_box { key = \"a_p\"; label = \"Prefiks:\"; edit_width = 10; value = \"P_\"; }" file)
   (write-line "                : edit_box { key = \"a_s\"; label = \"Start:\"; edit_width = 8; value = \"1\"; } }" file)
+  (write-line "        : text { label = \"Prefiks/Start dotyczy tez AUTO dla punktow bez ID.\"; }" file)
+  (write-line "        : toggle { key = \"fix_dupes\"; label = \"Rozroznij powtarzajace sie ID\"; value = \"1\"; }" file)
+  (write-line "        : text { label = \"Np. P12 + P12 -> P12(1), P12(2).\"; }" file)
   (write-line "      }" file)
 
   (write-line
@@ -2704,6 +2914,16 @@
           (start_list "z_conflicts")
           (add_list "Brak analizy.")
           (end_list)
+
+          ;; Tolerancja XY ma znaczenie tylko przy usuwaniu duplikatow.
+          (action_tile
+            "keep"
+            "(mode_tile \"d_tol\" 1)"
+          )
+          (action_tile
+            "rem"
+            "(mode_tile \"d_tol\" 0)"
+          )
 
           (action_tile
             "recalc"
