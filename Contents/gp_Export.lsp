@@ -440,16 +440,6 @@
   )
 )
 
-(defun gp-exp-midpoint-2d (p1 p2)
-  (list
-    (/ (+ (car p1) (car p2)) 2.0)
-    (/ (+ (cadr p1) (cadr p2)) 2.0)
-    (/ (+ (if (caddr p1) (caddr p1) 0.0)
-          (if (caddr p2) (caddr p2) 0.0))
-       2.0)
-  )
-)
-
 (defun gp-exp-aabb-center (min-pt max-pt)
   (list
     (/ (+ (car min-pt) (car max-pt)) 2.0)
@@ -460,10 +450,11 @@
   )
 )
 
-(defun gp-exp-world-to-local-2d (pt origin angle / dx dy ca sa)
-  ;; Obrot punktu o -angle wokol origin.
-  (setq dx (- (car pt) (car origin))
-        dy (- (cadr pt) (cadr origin))
+(defun gp-exp-world-to-local-2d (pt center angle / dx dy ca sa)
+  ;; Punkt w lokalnym ukladzie tekstu. Center jest srodkiem widocznej ramki,
+  ;; nie punktem wstawienia ani punktem dopasowania.
+  (setq dx (- (car pt) (car center))
+        dy (- (cadr pt) (cadr center))
         ca (cos angle)
         sa (sin angle))
   (list
@@ -472,251 +463,96 @@
   )
 )
 
-(defun gp-exp-text-anchor-from-object (obj / type alignment p1 p2)
-  (setq type (gp-exp-safe-object-name obj))
-  (cond
-    ((= type "AcDbMText")
-     (gp-exp-safe-point-property obj 'InsertionPoint)
-    )
-
-    ((= type "AcDbText")
-     (setq alignment (fix (gp-exp-safe-number-property obj 'Alignment 0))
-           p1 (gp-exp-safe-point-property obj 'InsertionPoint)
-           p2 (gp-exp-safe-point-property obj 'TextAlignmentPoint))
-     (cond
-       ;; Aligned i Fit sa definiowane przez dwa punkty.
-       ((and (member alignment '(3 5)) p1 p2)
-        (gp-exp-midpoint-2d p1 p2)
-       )
-       ;; Left korzysta z punktu wstawienia.
-       ((= alignment 0) p1)
-       ;; Pozostale wyrownania korzystaja z punktu dopasowania.
-       (p2 p2)
-       (T p1)
-     )
-    )
-
-    (T
-     (gp-exp-safe-point-property obj 'InsertionPoint)
-    )
-  )
-)
-
-(defun gp-exp-text-rotation-from-object (obj / type ename data hcode p1 p2 dir)
-  (setq type (gp-exp-safe-object-name obj)
+(defun gp-exp-text-rotation-from-object (obj / object-name ename data dir)
+  ;; Odczytujemy tylko kierunek widocznego napisu. Punkty wstawienia i
+  ;; dopasowania nie uczestnicza w wyszukiwaniu ani punktacji radaru.
+  (setq object-name (gp-exp-safe-object-name obj)
         ename (vlax-vla-object->ename obj)
         data (entget ename))
   (cond
-    ((= type "AcDbMText")
-     ;; DXF 11 jest kierunkiem lokalnej osi X MTEXT w WCS.
+    ((= object-name "AcDbMText")
      (setq dir (cdr (assoc 11 data)))
      (if
-       (and dir (> (distance '(0.0 0.0) (list (car dir) (cadr dir))) 1e-12))
+       (and
+         dir
+         (> (distance '(0.0 0.0) (list (car dir) (cadr dir))) 1e-12)
+       )
        (atan (cadr dir) (car dir))
        (gp-exp-safe-number-property obj 'Rotation 0.0)
      )
     )
-
-    ((= type "AcDbText")
-     (setq hcode (if (assoc 72 data) (cdr (assoc 72 data)) 0)
-           p1 (gp-exp-safe-point-property obj 'InsertionPoint)
-           p2 (gp-exp-safe-point-property obj 'TextAlignmentPoint))
-     (if
-       (and
-         (member hcode '(3 5))
-         p1 p2
-         (> (gp-exp-dist-2d p1 p2) 1e-12)
-       )
-       (atan (- (cadr p2) (cadr p1)) (- (car p2) (car p1)))
-       (gp-exp-safe-number-property obj 'Rotation 0.0)
-     )
+    ((= object-name "AcDbText")
+     (gp-exp-safe-number-property obj 'Rotation 0.0)
     )
-
     (T 0.0)
   )
 )
 
-(defun gp-exp-local-box-from-world-aabb
-  (min-pt max-pt anchor angle / corners local p xmin xmax ymin ymax)
-  ;; Awaryjne przyblizenie, gdy nie mozemy pobrac lokalnych wymiarow tekstu.
-  (setq corners
-    (list
-      (list (car min-pt) (cadr min-pt))
-      (list (car min-pt) (cadr max-pt))
-      (list (car max-pt) (cadr min-pt))
-      (list (car max-pt) (cadr max-pt))
-    )
-  )
-  (foreach p corners
-    (setq local (gp-exp-world-to-local-2d p anchor angle))
-    (if (not xmin)
-      (setq xmin (car local)
-            xmax (car local)
-            ymin (cadr local)
-            ymax (cadr local))
-      (setq xmin (min xmin (car local))
-            xmax (max xmax (car local))
-            ymin (min ymin (cadr local))
-            ymax (max ymax (cadr local)))
-    )
-  )
-  (list (list xmin ymin) (list xmax ymax))
-)
-
-(defun gp-exp-text-local-box-text
-  (obj / ename data box pmin pmax width height hcode vcode alignment p1 p2 span xmin xmax ymin ymax)
+(defun gp-exp-text-size-text (obj / ename data box pmin pmax)
+  ;; TEXTBOX zwraca lokalne wymiary napisu przy zerowym obrocie.
   (setq ename (vlax-vla-object->ename obj)
         data (entget ename)
         box (vl-catch-all-apply 'textbox (list data)))
-
   (if (vl-catch-all-error-p box)
-    (setq box nil)
-  )
-
-  (if box
+    nil
     (progn
       (setq pmin (car box)
-            pmax (cadr box)
-            width (max 1e-9 (- (car pmax) (car pmin)))
-            height (max 1e-9 (- (cadr pmax) (cadr pmin)))
-            hcode (if (assoc 72 data) (cdr (assoc 72 data)) 0)
-            vcode (if (assoc 73 data) (cdr (assoc 73 data)) 0)
-            alignment (fix (gp-exp-safe-number-property obj 'Alignment 0))
-            p1 (gp-exp-safe-point-property obj 'InsertionPoint)
-            p2 (gp-exp-safe-point-property obj 'TextAlignmentPoint))
-
-      ;; Lokalny zakres X wzgledem efektywnej kotwicy.
-      (cond
-        ((and (member hcode '(3 5)) p1 p2)
-         (setq span (gp-exp-dist-2d p1 p2))
-         (if (<= span 1e-9) (setq span width))
-         (setq xmin (/ (- span) 2.0)
-               xmax (/ span 2.0))
+            pmax (cadr box))
+      (if (and pmin pmax)
+        (list
+          (abs (- (car pmax) (car pmin)))
+          (abs (- (cadr pmax) (cadr pmin)))
         )
-        ((member hcode '(1 4))
-         (setq xmin (/ (- width) 2.0)
-               xmax (/ width 2.0))
-        )
-        ((= hcode 2)
-         (setq xmin (- width)
-               xmax 0.0)
-        )
-        (T
-         ;; Left zachowuje przesuniecia wynikajace np. z pochylenia fontu.
-         (setq xmin (car pmin)
-               xmax (car pmax))
-        )
+        nil
       )
-
-      ;; Lokalny zakres Y wzgledem linii bazowej albo punktu pionowego dopasowania.
-      (cond
-        ((or (= alignment 4) (= vcode 2))
-         (setq ymin (/ (- height) 2.0)
-               ymax (/ height 2.0))
-        )
-        ((= vcode 1)
-         (setq ymin 0.0
-               ymax height)
-        )
-        ((= vcode 3)
-         (setq ymin (- height)
-               ymax 0.0)
-        )
-        (T
-         (setq ymin (cadr pmin)
-               ymax (cadr pmax))
-        )
-      )
-
-      (list (list xmin ymin) (list xmax ymax))
     )
-    nil
   )
 )
 
-(defun gp-exp-text-local-box-mtext
-  (obj / ename data width height attach direction hpos vpos xmin xmax ymin ymax)
+(defun gp-exp-text-size-mtext (obj / ename data width height)
+  ;; DXF 42/43 to rzeczywista szerokosc i wysokosc sformatowanego MTEXT.
   (setq ename (vlax-vla-object->ename obj)
         data (entget ename)
         width (if (assoc 42 data) (abs (cdr (assoc 42 data))) 0.0)
-        height (if (assoc 43 data) (abs (cdr (assoc 43 data))) 0.0)
-        attach (if (assoc 71 data) (cdr (assoc 71 data)) 1)
-        direction (if (assoc 72 data) (cdr (assoc 72 data)) 1))
-
-  ;; DXF 42/43 sa rzeczywistymi wymiarami sformatowanego MTEXT.
+        height (if (assoc 43 data) (abs (cdr (assoc 43 data))) 0.0))
+  (if (<= width 1e-9)
+    (setq width (abs (gp-exp-safe-number-property obj 'ActualWidth 0.0)))
+  )
   (if (<= width 1e-9)
     (setq width (abs (gp-exp-safe-number-property obj 'Width 0.0)))
   )
   (if (<= height 1e-9)
-    (setq height (abs (gp-exp-safe-number-property obj 'Height 0.0)))
+    (setq height (abs (gp-exp-safe-number-property obj 'ActualHeight 0.0)))
   )
-
-  ;; Pionowy MTEXT (direction=3) korzysta z awaryjnego AABB,
-  ;; bo jego lokalny uklad szerokosci/wysokosci jest inny.
-  (if (and (/= direction 3) (> width 1e-9) (> height 1e-9))
-    (progn
-      (setq hpos
-        (cond
-          ((member attach '(1 4 7)) "LEFT")
-          ((member attach '(2 5 8)) "CENTER")
-          (T "RIGHT")
-        )
-      )
-      (setq vpos
-        (cond
-          ((member attach '(1 2 3)) "TOP")
-          ((member attach '(4 5 6)) "MIDDLE")
-          (T "BOTTOM")
-        )
-      )
-
-      (cond
-        ((= hpos "LEFT")
-         (setq xmin 0.0 xmax width)
-        )
-        ((= hpos "CENTER")
-         (setq xmin (/ (- width) 2.0) xmax (/ width 2.0))
-        )
-        (T
-         (setq xmin (- width) xmax 0.0)
-        )
-      )
-
-      (cond
-        ((= vpos "TOP")
-         (setq ymin (- height) ymax 0.0)
-        )
-        ((= vpos "MIDDLE")
-         (setq ymin (/ (- height) 2.0) ymax (/ height 2.0))
-        )
-        (T
-         (setq ymin 0.0 ymax height)
-        )
-      )
-
-      (list (list xmin ymin) (list xmax ymax))
-    )
+  (if (and (> width 1e-9) (> height 1e-9))
+    (list width height)
     nil
   )
 )
 
-(defun gp-exp-text-local-box-from-object
-  (obj min-pt max-pt anchor angle / type box)
-  (setq type (gp-exp-safe-object-name obj)
-        box
+(defun gp-exp-text-size-from-object
+  (obj min-pt max-pt / object-name size width height)
+  (setq object-name (gp-exp-safe-object-name obj)
+        size
           (cond
-            ((= type "AcDbText") (gp-exp-text-local-box-text obj))
-            ((= type "AcDbMText") (gp-exp-text-local-box-mtext obj))
+            ((= object-name "AcDbText") (gp-exp-text-size-text obj))
+            ((= object-name "AcDbMText") (gp-exp-text-size-mtext obj))
             (T nil)
           ))
-  (if box
-    box
-    (gp-exp-local-box-from-world-aabb min-pt max-pt anchor angle)
+  ;; Awaryjnie korzystamy z wymiarow zwyklego AABB. To przyblizenie,
+  ;; ale nadal zostanie znormalizowane przed uzyciem przez radar.
+  (if size
+    size
+    (progn
+      (setq width (abs (- (car max-pt) (car min-pt)))
+            height (abs (- (cadr max-pt) (cadr min-pt))))
+      (list (max width 1e-6) (max height 1e-6))
+    )
   )
 )
 
 (defun gp-exp-text-item-from-object
-  (obj tid / min-pt max-pt result txt cat min-list max-list anchor angle local-box type)
+  (obj tid / min-pt max-pt result txt cat min-list max-list center angle size object-name)
   (setq result
     (vl-catch-all-apply
       'vla-GetBoundingBox
@@ -730,21 +566,15 @@
             max-list (vlax-safearray->list max-pt)
             txt (gp-exp-safe-text-string obj)
             cat (gp-exp-text-category txt)
-            type (gp-exp-safe-object-name obj)
-            anchor (gp-exp-text-anchor-from-object obj))
+            object-name (gp-exp-safe-object-name obj)
+            center (gp-exp-aabb-center min-list max-list)
+            angle (gp-exp-text-rotation-from-object obj)
+            size (gp-exp-text-size-from-object obj min-list max-list))
 
-      (if (not anchor)
-        (setq anchor (gp-exp-aabb-center min-list max-list))
-      )
-
-      (setq angle (gp-exp-text-rotation-from-object obj)
-            local-box
-              (gp-exp-text-local-box-from-object
-                obj min-list max-list anchor angle))
-
-      ;; Pierwsze 6 pol zachowuje zgodnosc z poprzednia struktura.
-      ;; Dodatkowe pola:
-      ;; 6 anchor, 7 local-min, 8 local-max, 9 rotation, 10 object-type.
+      ;; Struktura tekstu:
+      ;; 0 AABB-min, 1 AABB-max, 2 tresc, 3 kategoria, 4 obiekt, 5 TID,
+      ;; 6 srodek widocznej ramki, 7 szerokosc, 8 wysokosc,
+      ;; 9 obrot, 10 ObjectName.
       (list
         min-list
         max-list
@@ -752,11 +582,11 @@
         cat
         obj
         tid
-        anchor
-        (car local-box)
-        (cadr local-box)
+        center
+        (car size)
+        (cadr size)
         angle
-        type
+        object-name
       )
     )
   )
@@ -774,57 +604,22 @@
   (nth 2 item)
 )
 
-(defun gp-exp-text-item-anchor (item)
+(defun gp-exp-text-item-center (item)
   (nth 6 item)
 )
 
-(defun gp-exp-text-item-local-min (item)
-  (nth 7 item)
+(defun gp-exp-text-item-width (item)
+  (if (numberp (nth 7 item)) (nth 7 item) 0.0)
 )
 
-(defun gp-exp-text-item-local-max (item)
-  (nth 8 item)
+(defun gp-exp-text-item-height (item)
+  (if (numberp (nth 8 item)) (nth 8 item) 0.0)
 )
 
 (defun gp-exp-text-item-rotation (item)
-  (if (nth 9 item) (nth 9 item) 0.0)
+  (if (numberp (nth 9 item)) (nth 9 item) 0.0)
 )
 
-(defun gp-exp-nearest-text (pt items radius category / item info best best-score)
-  (setq best nil
-        best-score nil)
-  (foreach item items
-    (if (= (nth 3 item) category)
-      (progn
-        (setq info (gp-exp-radar-distance-info pt item radius))
-        (if
-          (and
-            info
-            (or (not best-score) (< (nth 2 info) best-score))
-          )
-          (setq best item
-                best-score (nth 2 info))
-        )
-      )
-    )
-  )
-  best
-)
-
-(defun gp-exp-near-text-count (pt items radius category / count item info)
-  (setq count 0)
-  (foreach item items
-    (if (= (nth 3 item) category)
-      (progn
-        (setq info (gp-exp-radar-distance-info pt item radius))
-        (if info
-          (setq count (1+ count))
-        )
-      )
-    )
-  )
-  count
-)
 
 ;; ======================================================
 ;; ATRYBUTY BLOKOW
@@ -1261,32 +1056,34 @@
 )
 
 ;; ======================================================
-;; SZYBKI HYBRYDOWY RADAR TEKSTOW 1:1
+;; ZNORMALIZOWANY RADAR WIZUALNY TEKSTOW 1:1
 ;; ======================================================
 ;;
-;; Geometria kandydata:
-;; - prawidlowa kotwica zalezna od typu i wyrownania tekstu,
-;; - obrocony lokalny prostokat tekstu,
-;; - wirtualne zmniejszenie prostokata bez modyfikowania DWG,
-;; - ograniczenie oddzialywania tekstu do stalej wielokrotnosci promienia.
-;;
-;; Wydajnosc:
-;; - sweep-line oparty na kotwicach, niezalezny od wielkosci tekstu,
-;; - maksymalnie kilka najlepszych tekstow na rekord,
-;; - rekordy z najmniejsza liczba kandydatow sa obslugiwane pierwsze,
-;; - najwyzej jedna lokalna zamiana, bez rekurencji.
+;; Zasady:
+;; - InsertionPoint i TextAlignmentPoint nie uczestnicza w dopasowaniu,
+;; - pozycja tekstu pochodzi ze srodka jego widocznego AABB,
+;; - rozmiar ramki radaru jest normalizowany, wiec wysokosc tekstu w DWG
+;;   nie rozszerza automatycznie obszaru wyszukiwania,
+;; - dokladna odleglosc jest liczona do obroconej ramki tekstu,
+;; - dopasowanie 1:1 uzywa ograniczonych sciezek powiekszajacych,
+;;   dzieki czemu rozwiazuje lokalne lancuchy bez globalnego brute force.
 ;;
 ;; Kandydat:
-;; (score d-anchor d-box rid tid text-item value)
+;; (score d-center d-box rid tid text-item value)
 ;; ======================================================
 
 (setq *gp-exp-radar-ambiguity-absolute* 0.10)
 (setq *gp-exp-radar-ambiguity-ratio* 1.25)
 (setq *gp-exp-radar-max-candidates* 6)
-(setq *gp-exp-radar-anchor-limit-factor* 3.0)
-(setq *gp-exp-radar-anchor-weight* 0.25)
-(setq *gp-exp-radar-box-shrink-height-factor* 0.10)
-(setq *gp-exp-radar-box-shrink-radius-factor* 0.20)
+(setq *gp-exp-radar-reference-height-min-factor* 0.15)
+(setq *gp-exp-radar-reference-height-max-factor* 0.75)
+(setq *gp-exp-radar-reference-height-default-factor* 0.40)
+(setq *gp-exp-radar-max-width-factor* 2.50)
+(setq *gp-exp-radar-min-aspect* 0.50)
+(setq *gp-exp-radar-max-aspect* 10.0)
+(setq *gp-exp-radar-center-weight* 0.10)
+(setq *gp-exp-radar-max-augment-depth* 48)
+(setq *gp-exp-radar-improvement-passes* 3)
 (setq *gp-exp-last-radar-candidate-map* nil)
 
 (defun gp-exp-map-set (map key value / pair)
@@ -1297,8 +1094,17 @@
   )
 )
 
+(defun gp-exp-map-remove (map key / result pair)
+  (setq result '())
+  (foreach pair map
+    (if (/= (car pair) key)
+      (setq result (cons pair result))
+    )
+  )
+  (reverse result)
+)
+
 (defun gp-exp-radar-kind-priority (kind)
-  ;; Mniejsza liczba oznacza wyzszy priorytet.
   (cond
     ((= kind "INSERT") 0)
     ((= kind "POINT") 1)
@@ -1311,39 +1117,32 @@
   )
 )
 
-(defun gp-exp-radar-candidate-score (d-anchor d-box radius)
-  (+
-    d-box
-    (*
-      *gp-exp-radar-anchor-weight*
-      (max 0.0 (- d-anchor radius))
-    )
-  )
+(defun gp-exp-radar-candidate-score (d-center d-box)
+  (+ d-box (* *gp-exp-radar-center-weight* d-center))
 )
 
-(defun gp-exp-radar-candidate-less-p (a b / as bs aa ba ab bb ar br at bt)
-  (setq as (nth 0 a)
-        bs (nth 0 b)
-        aa (nth 1 a)
-        ba (nth 1 b)
-        ab (nth 2 a)
+(defun gp-exp-radar-candidate-less-p (a b / ab bb ac bc as bs ar br at bt)
+  ;; Najpierw odleglosc od widocznej ramki, potem od jej srodka.
+  (setq ab (nth 2 a)
         bb (nth 2 b)
+        ac (nth 1 a)
+        bc (nth 1 b)
+        as (nth 0 a)
+        bs (nth 0 b)
         ar (nth 3 a)
         br (nth 3 b)
         at (nth 4 a)
         bt (nth 4 b))
-
   (cond
-    ((not (equal as bs 1e-9)) (< as bs))
-    ((not (equal aa ba 1e-9)) (< aa ba))
     ((not (equal ab bb 1e-9)) (< ab bb))
+    ((not (equal ac bc 1e-9)) (< ac bc))
+    ((not (equal as bs 1e-9)) (< as bs))
     ((/= ar br) (< ar br))
     (T (< at bt))
   )
 )
 
 (defun gp-exp-radar-record-key-less-p (a b / an bn ap bp as bs ar br)
-  ;; Klucz: (liczba-kandydatow priorytet-typu najlepszy-koszt rid)
   (setq an (nth 0 a)
         bn (nth 0 b)
         ap (nth 1 a)
@@ -1352,7 +1151,6 @@
         bs (nth 2 b)
         ar (nth 3 a)
         br (nth 3 b))
-
   (cond
     ((/= an bn) (< an bn))
     ((/= ap bp) (< ap bp))
@@ -1415,108 +1213,137 @@
   (reverse result)
 )
 
-(defun gp-exp-radar-effective-local-box
-  (item radius / pmin pmax xmin xmax ymin ymax width height margin limit sxmin sxmax symin symax)
-  ;; Prostokat jest wirtualnie zmniejszany, a potem przycinany do kwadratu
-  ;; [-3R, 3R] wokol kotwicy. Obiekt w rysunku nie jest zmieniany.
-  (setq pmin (gp-exp-text-item-local-min item)
-        pmax (gp-exp-text-item-local-max item))
-
-  (if (and pmin pmax (> radius 0.0))
+(defun gp-exp-radar-median (values / indexes sorted count middle)
+  ;; VL-SORT-I zachowuje duplikaty, co jest wazne dla mediany wysokosci.
+  (if (not values)
+    nil
     (progn
-      (setq xmin (min (car pmin) (car pmax))
-            xmax (max (car pmin) (car pmax))
-            ymin (min (cadr pmin) (cadr pmax))
-            ymax (max (cadr pmin) (cadr pmax))
-            width (max 0.0 (- xmax xmin))
-            height (max 0.0 (- ymax ymin))
-            margin
-              (min
-                (* *gp-exp-radar-box-shrink-height-factor* height)
-                (* *gp-exp-radar-box-shrink-radius-factor* radius)
-                (* 0.45 width)
-                (* 0.45 height)
-              )
-            limit (* *gp-exp-radar-anchor-limit-factor* radius)
-            sxmin (max (- limit) (+ xmin margin))
-            sxmax (min limit (- xmax margin))
-            symin (max (- limit) (+ ymin margin))
-            symax (min limit (- ymax margin)))
-
-      (if (and (<= sxmin sxmax) (<= symin symax))
-        (list (list sxmin symin) (list sxmax symax))
-        ;; Nietypowy tekst: zachowujemy sama kotwice jako punktowy obszar.
-        (list '(0.0 0.0) '(0.0 0.0))
+      (setq indexes (vl-sort-i values '<)
+            sorted (mapcar '(lambda (index) (nth index values)) indexes)
+            count (length sorted)
+            middle (fix (/ count 2)))
+      (if (= (rem count 2) 1)
+        (nth middle sorted)
+        (/ (+ (nth (1- middle) sorted) (nth middle sorted)) 2.0)
       )
     )
-    nil
+  )
+)
+
+(defun gp-exp-radar-reference-height-from-items
+  (items radius / heights item height median min-height max-height default-height)
+  (setq heights '())
+  (foreach item items
+    (setq height (gp-exp-text-item-height item))
+    (if (> height 1e-9)
+      (setq heights (cons height heights))
+    )
+  )
+  (setq median (gp-exp-radar-median heights)
+        min-height (* *gp-exp-radar-reference-height-min-factor* radius)
+        max-height (* *gp-exp-radar-reference-height-max-factor* radius)
+        default-height (* *gp-exp-radar-reference-height-default-factor* radius))
+  (if (not median) (setq median default-height))
+  (max min-height (min max-height median))
+)
+
+(defun gp-exp-radar-reference-height
+  (prepared radius / items prepared-item)
+  (setq items '())
+  (foreach prepared-item prepared
+    (setq items (cons (cdr prepared-item) items))
+  )
+  (gp-exp-radar-reference-height-from-items items radius)
+)
+
+(defun gp-exp-radar-normalized-frame
+  (item reference-height radius / center angle raw-width raw-height aspect width height half-width half-height ca sa world-half-x world-half-y)
+  ;; Ramka jest centrowana na widocznym napisie. Oryginalna wysokosc sluzy
+  ;; tylko do odczytu proporcji szerokosc/wysokosc.
+  (setq center (gp-exp-text-item-center item)
+        angle (gp-exp-text-item-rotation item)
+        raw-width (max 1e-9 (gp-exp-text-item-width item))
+        raw-height (max 1e-9 (gp-exp-text-item-height item))
+        aspect (/ raw-width raw-height)
+        aspect (max *gp-exp-radar-min-aspect*
+                    (min *gp-exp-radar-max-aspect* aspect))
+        height reference-height
+        width (min (* *gp-exp-radar-max-width-factor* radius)
+                   (* height aspect))
+        width (max (* *gp-exp-radar-min-aspect* height) width)
+        half-width (/ width 2.0)
+        half-height (/ height 2.0)
+        ca (abs (cos angle))
+        sa (abs (sin angle))
+        world-half-x (+ (* ca half-width) (* sa half-height))
+        world-half-y (+ (* sa half-width) (* ca half-height)))
+  ;; Frame:
+  ;; center angle half-width half-height min-x max-x min-y max-y item
+  (list
+    center
+    angle
+    half-width
+    half-height
+    (- (car center) world-half-x radius)
+    (+ (car center) world-half-x radius)
+    (- (cadr center) world-half-y radius)
+    (+ (cadr center) world-half-y radius)
+    item
   )
 )
 
 (defun gp-exp-radar-distance-info
-  (pt item radius / anchor limit d-anchor local-pt box pmin pmax cx cy d-box score)
-  ;; Wynik: (d-box d-anchor score), albo nil gdy tekst nie jest kandydatem.
-  (setq anchor (gp-exp-text-item-anchor item))
-  (if (and anchor (> radius 0.0))
+  (pt frame radius / center angle half-width half-height local-pt cx cy d-box d-center score)
+  ;; Wynik: (d-box d-center score), albo nil.
+  (setq center (nth 0 frame)
+        angle (nth 1 frame)
+        half-width (nth 2 frame)
+        half-height (nth 3 frame)
+        local-pt (gp-exp-world-to-local-2d pt center angle)
+        cx (max (- half-width) (min (car local-pt) half-width))
+        cy (max (- half-height) (min (cadr local-pt) half-height))
+        d-box (distance
+                (list (car local-pt) (cadr local-pt))
+                (list cx cy))
+        d-center (distance '(0.0 0.0)
+                           (list (car local-pt) (cadr local-pt))))
+  (if (<= d-box radius)
     (progn
-      (setq limit (* *gp-exp-radar-anchor-limit-factor* radius)
-            d-anchor (gp-exp-dist-2d pt anchor))
-
-      (if (<= d-anchor limit)
-        (progn
-          (setq box (gp-exp-radar-effective-local-box item radius))
-          (if box
-            (progn
-              (setq local-pt
-                      (gp-exp-world-to-local-2d
-                        pt anchor (gp-exp-text-item-rotation item))
-                    pmin (car box)
-                    pmax (cadr box)
-                    cx (max (car pmin) (min (car local-pt) (car pmax)))
-                    cy (max (cadr pmin) (min (cadr local-pt) (cadr pmax)))
-                    d-box
-                      (distance
-                        (list (car local-pt) (cadr local-pt))
-                        (list cx cy)))
-
-              (if (<= d-box radius)
-                (progn
-                  (setq score
-                    (gp-exp-radar-candidate-score
-                      d-anchor d-box radius))
-                  (list d-box d-anchor score)
-                )
-                nil
-              )
-            )
-            nil
-          )
-        )
-        nil
-      )
+      (setq score (gp-exp-radar-candidate-score d-center d-box))
+      (list d-box d-center score)
     )
     nil
   )
 )
 
-(defun gp-exp-point-near-text-box-p (pt item radius)
-  (if (gp-exp-radar-distance-info pt item radius) T nil)
-)
-
-(defun gp-exp-near-text-info (pt items radius / count nearest nearest-score item info)
-  ;; Wynik: (liczba-kandydatow najblizszy-item).
-  (setq count 0
+(defun gp-exp-near-text-info
+  (pt items radius / reference-height count nearest nearest-score item frame info)
+  ;; Uzywane w raporcie konfliktow Z dla obiektow z wlasna rzedna.
+  (setq reference-height
+          (gp-exp-radar-reference-height-from-items items radius)
+        count 0
         nearest nil
         nearest-score nil)
   (foreach item items
-    (setq info (gp-exp-radar-distance-info pt item radius))
-    (if info
+    (setq frame (gp-exp-radar-normalized-frame item reference-height radius))
+    (if
+      (and
+        (<= (nth 4 frame) (car pt))
+        (>= (nth 5 frame) (car pt))
+        (<= (nth 6 frame) (cadr pt))
+        (>= (nth 7 frame) (cadr pt))
+      )
       (progn
-        (setq count (1+ count))
-        (if
-          (or (not nearest-score) (< (nth 2 info) nearest-score))
-          (setq nearest item
-                nearest-score (nth 2 info))
+        (setq info (gp-exp-radar-distance-info pt frame radius))
+        (if info
+          (progn
+            (setq count (1+ count))
+            (if
+              (or (not nearest-score) (< (nth 2 info) nearest-score))
+              (setq nearest item
+                    nearest-score (nth 2 info))
+            )
+          )
         )
       )
     )
@@ -1525,7 +1352,6 @@
 )
 
 (defun gp-exp-radar-record-x-less-p (a b / ax bx ar br)
-  ;; Rekord pomocniczy: (x rid record)
   (setq ax (nth 0 a)
         bx (nth 0 b)
         ar (nth 1 a)
@@ -1534,11 +1360,11 @@
 )
 
 (defun gp-exp-radar-text-x-less-p (a b / ax bx at bt)
-  ;; Tekst pomocniczy: (anchor-min-x anchor-max-x tid prepared-item)
+  ;; Tekst pomocniczy: min-x max-x min-y max-y tid prepared-item frame
   (setq ax (nth 0 a)
         bx (nth 0 b)
-        at (nth 2 a)
-        bt (nth 2 b))
+        at (nth 4 a)
+        bt (nth 4 b))
   (if (not (equal ax bx 1e-9)) (< ax bx) (< at bt))
 )
 
@@ -1553,20 +1379,17 @@
   (
     records texts radius category base-map z-mode
     /
-    result prepared record rid pt base
+    result prepared reference-height record rid pt base
     record-items record-entry text-items text-entry
-    prepared-item item value anchor limit min-x max-x px py
+    prepared-item item value frame px py
     active new-active remaining candidates info
-    d-box d-anchor score sorted
+    d-box d-center score sorted
   )
-
-  ;; Sweep-line bazuje na kotwicy +/- 3R. Wielkosc napisu nie rozszerza
-  ;; listy aktywnych tekstow.
   (setq result '()
         prepared (gp-exp-prepare-radar-texts texts category)
+        reference-height (gp-exp-radar-reference-height prepared radius)
         record-items '()
-        text-items '()
-        limit (* *gp-exp-radar-anchor-limit-factor* radius))
+        text-items '())
 
   (foreach record records
     (setq rid (gp-exp-record-get record 'rid)
@@ -1579,25 +1402,28 @@
 
   (foreach prepared-item prepared
     (setq item (cdr prepared-item)
-          anchor (gp-exp-text-item-anchor item))
-    (if anchor
-      (progn
-        (setq min-x (- (car anchor) limit)
-              max-x (+ (car anchor) limit))
-        (setq text-items
-          (cons
-            (list min-x max-x (gp-exp-text-item-id item) prepared-item)
-            text-items
-          )
+          frame (gp-exp-radar-normalized-frame
+                  item reference-height radius))
+    (setq text-items
+      (cons
+        (list
+          (nth 4 frame)
+          (nth 5 frame)
+          (nth 6 frame)
+          (nth 7 frame)
+          (gp-exp-text-item-id item)
+          prepared-item
+          frame
         )
+        text-items
       )
     )
   )
 
   (setq record-items
-    (gp-exp-stable-sort record-items 'gp-exp-radar-record-x-less-p)
+          (gp-exp-stable-sort record-items 'gp-exp-radar-record-x-less-p)
         remaining
-    (gp-exp-stable-sort text-items 'gp-exp-radar-text-x-less-p)
+          (gp-exp-stable-sort text-items 'gp-exp-radar-text-x-less-p)
         active '())
 
   (foreach record-entry record-items
@@ -1622,23 +1448,22 @@
     (setq active new-active)
 
     (foreach text-entry active
-      (setq prepared-item (nth 3 text-entry)
-            value (car prepared-item)
-            item (cdr prepared-item)
-            anchor (gp-exp-text-item-anchor item))
-
-      ;; Tani test Y przed geometria obroconego prostokata.
-      (if (<= (abs (- py (cadr anchor))) limit)
+      (if (and (<= (nth 2 text-entry) py)
+               (>= (nth 3 text-entry) py))
         (progn
-          (setq info (gp-exp-radar-distance-info pt item radius))
+          (setq prepared-item (nth 5 text-entry)
+                value (car prepared-item)
+                item (cdr prepared-item)
+                frame (nth 6 text-entry)
+                info (gp-exp-radar-distance-info pt frame radius))
           (if info
             (progn
               (setq d-box (nth 0 info)
-                    d-anchor (nth 1 info)
+                    d-center (nth 1 info)
                     score (nth 2 info))
               (setq candidates
                 (cons
-                  (list score d-anchor d-box rid
+                  (list score d-center d-box rid
                         (gp-exp-text-item-id item) item value)
                   candidates
                 )
@@ -1692,17 +1517,52 @@
   )
 )
 
-(defun gp-exp-radar-first-free-candidate
-  (candidates tid-map excluded-tid / candidate tid result)
-  (setq result nil)
-  (while (and candidates (not result))
+(defun gp-exp-radar-augment
+  (rid candidate-map rid-map tid-map seen-tids depth / candidates candidate tid owner state success)
+  ;; Klasyczna sciezka powiekszajaca w lokalnym grafie kandydatow.
+  ;; Seen-tids i limit glebokosci gwarantuja zakonczenie.
+  (setq candidates (gp-exp-map-get candidate-map rid)
+        success nil)
+  (while (and candidates (not success))
     (setq candidate (car candidates)
           tid (nth 4 candidate))
-    (if
-      (and
-        (or (not excluded-tid) (/= tid excluded-tid))
-        (not (gp-exp-map-get tid-map tid))
+    (if (not (member tid seen-tids))
+      (progn
+        (setq seen-tids (cons tid seen-tids)
+              owner (gp-exp-map-get tid-map tid))
+        (cond
+          ((not owner)
+           (setq rid-map (gp-exp-map-set rid-map rid candidate)
+                 tid-map (gp-exp-map-set tid-map tid rid)
+                 success T)
+          )
+          ((< depth *gp-exp-radar-max-augment-depth*)
+           (setq state
+             (gp-exp-radar-augment
+               owner candidate-map rid-map tid-map seen-tids (1+ depth)))
+           (setq rid-map (nth 1 state)
+                 tid-map (nth 2 state)
+                 seen-tids (nth 3 state))
+           (if (car state)
+             (setq rid-map (gp-exp-map-set rid-map rid candidate)
+                   tid-map (gp-exp-map-set tid-map tid rid)
+                   success T)
+           )
+          )
+        )
       )
+    )
+    (setq candidates (cdr candidates))
+  )
+  (list success rid-map tid-map seen-tids)
+)
+
+(defun gp-exp-radar-find-candidate-by-tid
+  (candidates tid / result candidate)
+  (setq result nil)
+  (while (and candidates (not result))
+    (setq candidate (car candidates))
+    (if (= (nth 4 candidate) tid)
       (setq result candidate)
     )
     (setq candidates (cdr candidates))
@@ -1710,50 +1570,73 @@
   result
 )
 
-(defun gp-exp-radar-assign-local
-  (rid candidate-map rid-map tid-map / candidates direct candidate tid owner owner-candidates alternative success)
-
-  ;; Najpierw wolny tekst. Gdy wszystkie sa zajete, probujemy tylko
-  ;; jednej zamiany: wlasciciel tekstu musi miec wolna alternatywe.
-  (setq candidates (gp-exp-map-get candidate-map rid)
-        direct (gp-exp-radar-first-free-candidate candidates tid-map nil)
-        success nil)
-
-  (if direct
-    (progn
-      (setq tid (nth 4 direct)
-            rid-map (gp-exp-map-set rid-map rid direct)
-            tid-map (gp-exp-map-set tid-map tid rid)
-            success T)
-    )
-    (while (and candidates (not success))
-      (setq candidate (car candidates)
-            tid (nth 4 candidate)
-            owner (gp-exp-map-get tid-map tid))
-
-      (if owner
+(defun gp-exp-radar-improve-matching
+  (record-order candidate-map rid-map tid-map / pass changed rid current current-score current-tid candidates candidate candidate-score candidate-tid owner owner-current reverse old-total new-total swapped)
+  ;; Zachowujemy liczbe przypisan, a przez kilka ograniczonych przebiegow
+  ;; poprawiamy laczny koszt wolnym ruchem albo bezposrednia zamiana para.
+  (setq pass 0
+        changed T)
+  (while (and changed (< pass *gp-exp-radar-improvement-passes*))
+    (setq changed nil
+          pass (1+ pass))
+    (foreach rid record-order
+      (setq current (gp-exp-map-get rid-map rid)
+            swapped nil)
+      (if current
         (progn
-          (setq owner-candidates (gp-exp-map-get candidate-map owner)
-                alternative
-                  (gp-exp-radar-first-free-candidate
-                    owner-candidates tid-map tid))
-
-          (if alternative
-            (progn
-              (setq rid-map (gp-exp-map-set rid-map owner alternative)
-                    tid-map (gp-exp-map-set tid-map (nth 4 alternative) owner)
-                    rid-map (gp-exp-map-set rid-map rid candidate)
-                    tid-map (gp-exp-map-set tid-map tid rid)
-                    success T)
+          (setq current-score (nth 0 current)
+                current-tid (nth 4 current)
+                candidates (gp-exp-map-get candidate-map rid))
+          (while (and candidates (not swapped))
+            (setq candidate (car candidates)
+                  candidate-score (nth 0 candidate)
+                  candidate-tid (nth 4 candidate))
+            (if
+              (and
+                (/= candidate-tid current-tid)
+                (< candidate-score (- current-score 1e-9))
+              )
+              (progn
+                (setq owner (gp-exp-map-get tid-map candidate-tid))
+                (cond
+                  ((not owner)
+                   (setq tid-map (gp-exp-map-remove tid-map current-tid)
+                         rid-map (gp-exp-map-set rid-map rid candidate)
+                         tid-map (gp-exp-map-set tid-map candidate-tid rid)
+                         changed T
+                         swapped T)
+                  )
+                  ((/= owner rid)
+                   (setq owner-current (gp-exp-map-get rid-map owner)
+                         reverse
+                           (gp-exp-radar-find-candidate-by-tid
+                             (gp-exp-map-get candidate-map owner)
+                             current-tid))
+                   (if (and owner-current reverse)
+                     (progn
+                       (setq old-total (+ current-score (nth 0 owner-current))
+                             new-total (+ candidate-score (nth 0 reverse)))
+                       (if (< new-total (- old-total 1e-9))
+                         (setq rid-map (gp-exp-map-set rid-map rid candidate)
+                               rid-map (gp-exp-map-set rid-map owner reverse)
+                               tid-map (gp-exp-map-set tid-map candidate-tid rid)
+                               tid-map (gp-exp-map-set tid-map current-tid owner)
+                               changed T
+                               swapped T)
+                       )
+                     )
+                   )
+                  )
+                )
+              )
             )
+            (setq candidates (cdr candidates))
           )
         )
       )
-      (setq candidates (cdr candidates))
     )
   )
-
-  (list success rid-map tid-map)
+  (list rid-map tid-map)
 )
 
 (defun gp-exp-radar-first-other-candidate (candidates assigned-tid / candidate result)
@@ -1803,8 +1686,8 @@
     (cons 'source "RADAR")
     (cons 'text-object (gp-exp-text-item-object (nth 5 candidate)))
     (cons 'text-id tid)
-    (cons 'distance (nth 1 candidate))
-    (cons 'anchor-distance (nth 1 candidate))
+    (cons 'distance (nth 2 candidate))
+    (cons 'center-distance (nth 1 candidate))
     (cons 'edge-distance (nth 2 candidate))
     (cons 'box-distance (nth 2 candidate))
     (cons 'match-score (nth 0 candidate))
@@ -1818,26 +1701,37 @@
   (
     records texts radius category base-map z-mode
     /
-    candidate-map record-order rid-map tid-map state rid
+    candidate-map record-order rid-map tid-map state rid improved
     result record candidate candidates
   )
-
   (setq candidate-map
     (gp-exp-build-radar-candidate-map
       records texts radius category base-map z-mode))
   (setq *gp-exp-last-radar-candidate-map* candidate-map)
 
   (setq record-order
-    (gp-exp-build-radar-record-order records candidate-map)
+          (gp-exp-build-radar-record-order records candidate-map)
         rid-map '()
         tid-map '())
 
+  ;; Kazdy przebieg szuka sciezki tylko wewnatrz polaczonej lokalnej grupy.
   (foreach rid record-order
-    (setq state
-      (gp-exp-radar-assign-local rid candidate-map rid-map tid-map)
-          rid-map (cadr state)
-          tid-map (caddr state))
+    (if (not (gp-exp-map-get rid-map rid))
+      (progn
+        (setq state
+          (gp-exp-radar-augment
+            rid candidate-map rid-map tid-map '() 0))
+        (setq rid-map (nth 1 state)
+              tid-map (nth 2 state))
+      )
+    )
   )
+
+  (setq improved
+    (gp-exp-radar-improve-matching
+      record-order candidate-map rid-map tid-map)
+        rid-map (car improved)
+        tid-map (cadr improved))
 
   (setq result '())
   (foreach record records
