@@ -1,133 +1,22 @@
-(vl-load-com)
-(load "gp_Core.lsp" "\nBLAD: Nie znaleziono pliku gp_Core.lsp!")
-
 ;; ======================================================
-;; GEOPROFICAD - EKSPORT PIKIET V23
+;; GEOPROFICAD - GP_EXPORT V23
+;; AUTO DLA BRAKUJACYCH ID - PAKIET FUNKCJI DO PODMIANY
+;; Baza: commit 7990493790f4e7f9d23cde29ff33205ff43cf7ae
 ;; ======================================================
 ;;
-;; Najwazniejsze zalozenia:
-;; - jedna analiza zasila raport i finalny eksport,
-;; - kazdy typ obiektu mozna wlaczyc lub wylaczyc,
-;; - raport pokazuje zrodlo ID i Z dla kazdego typu,
-;; - bloki sa czytane kolejno z:
-;;     atrybutow -> geometrii -> tekstow w definicji -> radaru,
-;; - opcjonalnie jeden tekst radaru moze zostac uzyty tylko raz,
-;; - TEXT/MTEXT sa danymi pomocniczymi i nie sa eksportowane jako punkty.
+;; Zmiana ograniczona do obslugi ID i UI:
+;; - nowa opcja: "Numeruj punkty bez znalezionego ID",
+;; - Prefiks/Start sa aktywne tylko gdy sa potrzebne,
+;; - "Nowa numeracja wszystkich" ma pierwszenstwo,
+;; - przy wylaczonym AUTO brak ID jest raportowany jako MISSING,
+;; - TXT z brakujacym ID jest blokowany (PTS nie wymaga ID),
+;; - radar, Z, geometria i dopasowanie 1:1 nie sa redefiniowane.
 ;;
-;; Komendy:
-;;   EKSPORT_PIKIET_V23
-;;   EKSPORT_PIKIET_V22  (alias zgodnosci)
+;; Ten plik mozna:
+;; 1) potraktowac jako zestaw pelnych funkcji do podmiany w gp_Export.lsp,
+;; 2) albo testowo zaladowac PO aktualnym gp_Export.lsp - definicje ponizej
+;;    nadpisza tylko funkcje zwiazane z numeracja/UI.
 ;; ======================================================
-
-(setq *gp-exp-block-text-cache* '())
-
-;; ======================================================
-;; PODSTAWOWE HELPERY
-;; ======================================================
-
-(defun gp-exp-dist-2d (p1 p2)
-  (geocad-dist-2d p1 p2)
-)
-
-(defun gp-exp-format-coord (val)
-  (vl-string-translate "," "." (rtos val 2 3))
-)
-
-(defun gp-exp-trim (txt)
-  (vl-string-trim " \t\r\n" (if txt txt ""))
-)
-
-(defun gp-exp-nonempty-p (txt)
-  (/= (gp-exp-trim txt) "")
-)
-
-(defun gp-exp-has-digit-p (txt / i ch found)
-  (setq txt (if txt txt "")
-        i 1
-        found nil)
-  (while (and (not found) (<= i (strlen txt)))
-    (setq ch (ascii (substr txt i 1)))
-    (if (and (>= ch 48) (<= ch 57))
-      (setq found T)
-    )
-    (setq i (1+ i))
-  )
-  found
-)
-
-(defun gp-exp-safe-object-name (obj / res)
-  (setq res (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
-  (if (vl-catch-all-error-p res) "" res)
-)
-
-(defun gp-exp-safe-text-string (obj / res)
-  (setq res (vl-catch-all-apply 'vla-get-TextString (list obj)))
-  (if (vl-catch-all-error-p res) "" res)
-)
-
-(defun gp-exp-safe-tag-string (obj / res)
-  (setq res (vl-catch-all-apply 'vla-get-TagString (list obj)))
-  (if (vl-catch-all-error-p res) "" (strcase res))
-)
-
-(defun gp-exp-safe-handle (obj / res)
-  (setq res (vl-catch-all-apply 'vla-get-Handle (list obj)))
-  (if (vl-catch-all-error-p res) "" res)
-)
-
-(defun gp-exp-parse-tags (txt)
-  (mapcar 'strcase (geocad-parse-tags txt))
-)
-
-(defun gp-exp-parse-number (txt / norm val)
-  ;; Akceptuje liczby calkowite i dziesietne, z kropka albo przecinkiem.
-  (setq norm (vl-string-translate "," "." (gp-exp-trim txt)))
-  (if (= norm "")
-    nil
-    (progn
-      (setq val (distof norm))
-      val
-    )
-  )
-)
-
-(defun gp-exp-text-category (txt)
-  (geocad-text-radar-categorize txt)
-)
-
-(defun gp-exp-record-get (record key)
-  (cdr (assoc key record))
-)
-
-(defun gp-exp-map-get (map key)
-  (cdr (assoc key map))
-)
-
-(defun gp-exp-kind-label (kind)
-  (cond
-    ((= kind "POINT") "POINT")
-    ((= kind "INSERT") "INSERT")
-    ((= kind "LINE") "LINE")
-    ((= kind "POLYLINE") "POLYLINE")
-    ((= kind "ARC") "ARC")
-    ((= kind "CIRCLE") "CIRCLE")
-    ((= kind "SOLID") "SOLID")
-    (T kind)
-  )
-)
-
-(defun gp-exp-kind-tile (kind)
-  (cond
-    ((= kind "POINT") "use_point")
-    ((= kind "INSERT") "use_insert")
-    ((= kind "LINE") "use_line")
-    ((= kind "POLYLINE") "use_polyline")
-    ((= kind "ARC") "use_arc")
-    ((= kind "CIRCLE") "use_circle")
-    ((= kind "SOLID") "use_solid")
-    (T "")
-  )
-)
 
 (defun gp-exp-source-label (source)
   (cond
@@ -136,1779 +25,24 @@
     ((= source "GEOM") "geometria")
     ((= source "RADAR") "tekst-obok")
     ((= source "AUTO") "auto")
+    ((= source "MISSING") "brak-id")
     ((= source "ZERO") "zero")
     (T "brak")
   )
 )
 
-(defun gp-exp-list-inc (alist key / pair)
-  (setq pair (assoc key alist))
-  (if pair
-    (subst (cons key (1+ (cdr pair))) pair alist)
-    (cons (cons key 1) alist)
-  )
-)
-
-(defun gp-exp-count-get (alist key)
-  (if (assoc key alist) (cdr (assoc key alist)) 0)
-)
-
-(defun gp-exp-unique-cons (value values)
-  (if (member value values) values (cons value values))
-)
-
-;; ======================================================
-;; OBSLUGA BLEDOW I DIALOGU ZAPISU
-;; ======================================================
-
-(defun gp-exp-error (msg)
-  (if f
-    (vl-catch-all-apply 'close (list f))
-  )
-  (if dcl-id
-    (vl-catch-all-apply 'unload_dialog (list dcl-id))
-  )
-  (if (and dcl-file (findfile dcl-file))
-    (vl-file-delete dcl-file)
-  )
-  (setq *error* old-err)
-  (princ
-    (if (member msg '("Function cancelled" "quit / exit abort"))
-      "\nPrzerwano."
-      (strcat "\nBlad: " msg)
-    )
-  )
-  (princ)
-)
-
-(defun gp-exp-save-file-dialog (out-format / wsh tmp-file shell-cmd file-handle result filter title ext)
-  (if (= out-format "pts")
-    (setq filter "Chmura punktow PTS (*.pts)|*.pts|Pliki tekstowe (*.txt)|*.txt|Wszystkie pliki (*.*)|*.*"
-          title "Zapisz chmure punktow PTS"
-          ext "pts")
-    (setq filter "Pliki tekstowe (*.txt)|*.txt|Wszystkie pliki (*.*)|*.*"
-          title "Zapisz pikiety TXT"
-          ext "txt")
-  )
-
-  (setq wsh (vlax-create-object "WScript.Shell")
-        tmp-file (vl-filename-mktemp "geoprofi_export_path.txt"))
-
-  (setq shell-cmd
-    (strcat
-      "powershell.exe -WindowStyle Hidden -Command \"& {"
-      "Add-Type -AssemblyName System.Windows.Forms;"
-      "$d = New-Object System.Windows.Forms.SaveFileDialog;"
-      "$d.Filter = '" filter "';"
-      "$d.DefaultExt = '" ext "';"
-      "$d.AddExtension = $true;"
-      "$d.Title = '" title "';"
-      "if($d.ShowDialog() -eq 'OK') { "
-      "[System.IO.File]::WriteAllText('"
-      (vl-string-translate "\\" "/" tmp-file)
-      "', $d.FileName) }}\""
-    )
-  )
-
-  (vlax-invoke-method wsh 'Run shell-cmd 0 :vlax-true)
-  (vlax-release-object wsh)
-
-  (if (findfile tmp-file)
-    (progn
-      (setq file-handle (open tmp-file "r"))
-      (setq result (read-line file-handle))
-      (close file-handle)
-      (vl-file-delete tmp-file)
-    )
-  )
-  result
-)
-
-;; ======================================================
-;; UKLAD WSPOLRZEDNYCH
-;; ======================================================
-
-(defun gp-exp-detect-epsg (pt / x y result)
-  (if (not pt)
-    "Brak"
-    (progn
-      (setq x (car pt)
-            y (cadr pt)
-            result "Uklad Lokalny")
-      (if (and (> y 4900000) (< y 6100000))
-        (cond
-          ((and (> x 5300000) (< x 5900000)) (setq result "Uklad 2000 (S5)"))
-          ((and (> x 6300000) (< x 6900000)) (setq result "Uklad 2000 (S6)"))
-          ((and (> x 7300000) (< x 7900000)) (setq result "Uklad 2000 (S7)"))
-          ((and (> x 8300000) (< x 8900000)) (setq result "Uklad 2000 (S8)"))
-        )
-      )
-      (if
-        (and
-          (= result "Uklad Lokalny")
-          (> x 3000000) (< x 6000000)
-          (> y 3000000) (< y 6000000)
-        )
-        (setq result "Uklad 1965 (?)")
-      )
-      result
-    )
-  )
-)
-
-(defun gp-exp-detect-record-system (records / count p1 p2 p3 r1 r2 r3)
-  (setq count (length records))
-  (if (= count 0)
-    (list "Brak punktow" nil)
-    (progn
-      (setq p1 (gp-exp-record-get (nth 0 records) 'pt)
-            p2 (gp-exp-record-get (nth (fix (/ count 2)) records) 'pt)
-            p3 (gp-exp-record-get (last records) 'pt)
-            r1 (gp-exp-detect-epsg p1)
-            r2 (gp-exp-detect-epsg p2)
-            r3 (gp-exp-detect-epsg p3))
-      (if (and (= r1 r2) (= r2 r3))
-        (list r1 nil)
-        (list "ALARM: NIEZGODNOSC UKLADOW!" T)
-      )
-    )
-  )
-)
-
-;; ======================================================
-;; WYCIAGANIE PUNKTOW Z OBIEKTOW
-;; ======================================================
-
-(defun gp-exp-point-from-variant (variant)
-  (vlax-safearray->list (vlax-variant-value variant))
-)
-
-(defun gp-exp-extract-points (obj / type result start-p end-p i ename data)
-  (setq type (gp-exp-safe-object-name obj)
-        result '())
-
-  (cond
-    ((= type "AcDbPoint")
-     (setq ename (vlax-vla-object->ename obj)
-           data (entget ename))
-     (if (assoc 10 data)
-       (setq result
-         (list
-           (trans (cdr (assoc 10 data)) ename 0)
-         )
-       )
-     )
-    )
-
-    ((= type "AcDbBlockReference")
-     (setq result
-       (list
-         (gp-exp-point-from-variant (vla-get-InsertionPoint obj))
-       )
-     )
-    )
-
-    ((= type "AcDbCircle")
-     (setq result
-       (list
-         (gp-exp-point-from-variant (vla-get-Center obj))
-       )
-     )
-    )
-
-    ((= type "AcDbLine")
-     (setq result
-       (list
-         (vlax-curve-getStartPoint obj)
-         (vlax-curve-getEndPoint obj)
-       )
-     )
-    )
-
-    ((= type "AcDbArc")
-     (setq start-p (vlax-curve-getStartParam obj)
-           end-p (vlax-curve-getEndParam obj))
-     (setq result
-       (list
-         (vlax-curve-getPointAtParam obj start-p)
-         (vlax-curve-getPointAtParam obj (+ start-p (/ (- end-p start-p) 2.0)))
-         (vlax-curve-getPointAtParam obj end-p)
-       )
-     )
-    )
-
-    ((member type '("AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline"))
-     (setq start-p (fix (vlax-curve-getStartParam obj))
-           end-p (fix (vlax-curve-getEndParam obj))
-           i start-p)
-     (while (<= i end-p)
-       (setq result
-         (cons (vlax-curve-getPointAtParam obj i) result)
-       )
-       (setq i (1+ i))
-     )
-     (setq result (reverse result))
-    )
-
-    ((= type "AcDbSolid")
-     (setq ename (vlax-vla-object->ename obj)
-           data (entget ename))
-     (foreach code '(10 11 12 13)
-       (if (assoc code data)
-         (setq result
-           (append result
-             (list (trans (cdr (assoc code data)) ename 0))
-           )
-         )
-       )
-     )
-    )
-  )
-  result
-)
-
-(defun gp-exp-kind-from-object-name (type)
-  (cond
-    ((= type "AcDbPoint") "POINT")
-    ((= type "AcDbBlockReference") "INSERT")
-    ((= type "AcDbLine") "LINE")
-    ((member type '("AcDbPolyline" "AcDb2dPolyline" "AcDb3dPolyline")) "POLYLINE")
-    ((= type "AcDbArc") "ARC")
-    ((= type "AcDbCircle") "CIRCLE")
-    ((= type "AcDbSolid") "SOLID")
-    (T nil)
-  )
-)
-
-;; ======================================================
-;; TEKSTY ZEWNATRZNE - RADAR
-;; ======================================================
-
-(defun gp-exp-point-value-to-list (value / raw converted)
-  ;; Nie uzywamy (type value), poniewaz dynamiczna zmienna o nazwie
-  ;; type moglaby przeslonic wbudowana funkcje TYPE w AutoLISP-ie.
-  (cond
-    ((vl-catch-all-error-p value) nil)
-    ((listp value) value)
-    (T
-     (setq raw
-       (vl-catch-all-apply
-         'vlax-variant-value
-         (list value)
-       )
-     )
-     (if (not (vl-catch-all-error-p raw))
-       (gp-exp-point-value-to-list raw)
-       (progn
-         (setq converted
-           (vl-catch-all-apply
-             'vlax-safearray->list
-             (list value)
-           )
-         )
-         (if (vl-catch-all-error-p converted) nil converted)
-       )
-     )
-    )
-  )
-)
-
-(defun gp-exp-safe-point-property (obj property / value)
-  (setq value
-    (vl-catch-all-apply
-      'vlax-get-property
-      (list obj property)
-    )
-  )
-  (gp-exp-point-value-to-list value)
-)
-
-(defun gp-exp-safe-number-property (obj property fallback / value)
-  (setq value
-    (vl-catch-all-apply
-      'vlax-get-property
-      (list obj property)
-    )
-  )
-  (if
-    (or
-      (vl-catch-all-error-p value)
-      (not (numberp value))
-    )
-    fallback
-    value
-  )
-)
-
-(defun gp-exp-aabb-center (min-pt max-pt)
-  (list
-    (/ (+ (car min-pt) (car max-pt)) 2.0)
-    (/ (+ (cadr min-pt) (cadr max-pt)) 2.0)
-    (/ (+ (if (caddr min-pt) (caddr min-pt) 0.0)
-          (if (caddr max-pt) (caddr max-pt) 0.0))
-       2.0)
-  )
-)
-
-(defun gp-exp-world-to-local-2d (pt center angle / dx dy ca sa)
-  ;; Punkt w lokalnym ukladzie tekstu. Center jest srodkiem widocznej ramki,
-  ;; nie punktem wstawienia ani punktem dopasowania.
-  (setq dx (- (car pt) (car center))
-        dy (- (cadr pt) (cadr center))
-        ca (cos angle)
-        sa (sin angle))
-  (list
-    (+ (* dx ca) (* dy sa))
-    (+ (* (- dx) sa) (* dy ca))
-  )
-)
-
-(defun gp-exp-text-rotation-from-object (obj / object-name ename data dir)
-  ;; Odczytujemy tylko kierunek widocznego napisu. Punkty wstawienia i
-  ;; dopasowania nie uczestnicza w wyszukiwaniu ani punktacji radaru.
-  (setq object-name (gp-exp-safe-object-name obj)
-        ename (vlax-vla-object->ename obj)
-        data (entget ename))
-  (cond
-    ((= object-name "AcDbMText")
-     (setq dir (cdr (assoc 11 data)))
-     (if
-       (and
-         dir
-         (> (distance '(0.0 0.0) (list (car dir) (cadr dir))) 1e-12)
-       )
-       (atan (cadr dir) (car dir))
-       (gp-exp-safe-number-property obj 'Rotation 0.0)
-     )
-    )
-    ((= object-name "AcDbText")
-     (gp-exp-safe-number-property obj 'Rotation 0.0)
-    )
-    (T 0.0)
-  )
-)
-
-(defun gp-exp-text-size-text (obj / ename data box pmin pmax)
-  ;; TEXTBOX zwraca lokalne wymiary napisu przy zerowym obrocie.
-  (setq ename (vlax-vla-object->ename obj)
-        data (entget ename)
-        box (vl-catch-all-apply 'textbox (list data)))
-  (if (vl-catch-all-error-p box)
-    nil
-    (progn
-      (setq pmin (car box)
-            pmax (cadr box))
-      (if (and pmin pmax)
-        (list
-          (abs (- (car pmax) (car pmin)))
-          (abs (- (cadr pmax) (cadr pmin)))
-        )
-        nil
-      )
-    )
-  )
-)
-
-(defun gp-exp-text-size-mtext (obj / ename data width height)
-  ;; DXF 42/43 to rzeczywista szerokosc i wysokosc sformatowanego MTEXT.
-  (setq ename (vlax-vla-object->ename obj)
-        data (entget ename)
-        width (if (assoc 42 data) (abs (cdr (assoc 42 data))) 0.0)
-        height (if (assoc 43 data) (abs (cdr (assoc 43 data))) 0.0))
-  (if (<= width 1e-9)
-    (setq width (abs (gp-exp-safe-number-property obj 'ActualWidth 0.0)))
-  )
-  (if (<= width 1e-9)
-    (setq width (abs (gp-exp-safe-number-property obj 'Width 0.0)))
-  )
-  (if (<= height 1e-9)
-    (setq height (abs (gp-exp-safe-number-property obj 'ActualHeight 0.0)))
-  )
-  (if (and (> width 1e-9) (> height 1e-9))
-    (list width height)
-    nil
-  )
-)
-
-(defun gp-exp-text-size-from-object
-  (obj min-pt max-pt / object-name size width height)
-  (setq object-name (gp-exp-safe-object-name obj)
-        size
-          (cond
-            ((= object-name "AcDbText") (gp-exp-text-size-text obj))
-            ((= object-name "AcDbMText") (gp-exp-text-size-mtext obj))
-            (T nil)
-          ))
-  ;; Awaryjnie korzystamy z wymiarow zwyklego AABB. To przyblizenie,
-  ;; ale nadal zostanie znormalizowane przed uzyciem przez radar.
-  (if size
-    size
-    (progn
-      (setq width (abs (- (car max-pt) (car min-pt)))
-            height (abs (- (cadr max-pt) (cadr min-pt))))
-      (list (max width 1e-6) (max height 1e-6))
-    )
-  )
-)
-
-(defun gp-exp-text-item-from-object
-  (obj tid / min-pt max-pt result txt cat min-list max-list center angle size object-name)
-  (setq result
-    (vl-catch-all-apply
-      'vla-GetBoundingBox
-      (list obj 'min-pt 'max-pt)
-    )
-  )
-  (if (vl-catch-all-error-p result)
-    nil
-    (progn
-      (setq min-list (vlax-safearray->list min-pt)
-            max-list (vlax-safearray->list max-pt)
-            txt (gp-exp-safe-text-string obj)
-            cat (gp-exp-text-category txt)
-            object-name (gp-exp-safe-object-name obj)
-            center (gp-exp-aabb-center min-list max-list)
-            angle (gp-exp-text-rotation-from-object obj)
-            size (gp-exp-text-size-from-object obj min-list max-list))
-
-      ;; Struktura tekstu:
-      ;; 0 AABB-min, 1 AABB-max, 2 tresc, 3 kategoria, 4 obiekt, 5 TID,
-      ;; 6 srodek widocznej ramki, 7 szerokosc, 8 wysokosc,
-      ;; 9 obrot, 10 ObjectName.
-      (list
-        min-list
-        max-list
-        txt
-        cat
-        obj
-        tid
-        center
-        (car size)
-        (cadr size)
-        angle
-        object-name
-      )
-    )
-  )
-)
-
-(defun gp-exp-text-item-id (item)
-  (nth 5 item)
-)
-
-(defun gp-exp-text-item-object (item)
-  (nth 4 item)
-)
-
-(defun gp-exp-text-item-value (item)
-  (nth 2 item)
-)
-
-(defun gp-exp-text-item-center (item)
-  (nth 6 item)
-)
-
-(defun gp-exp-text-item-width (item)
-  (if (numberp (nth 7 item)) (nth 7 item) 0.0)
-)
-
-(defun gp-exp-text-item-height (item)
-  (if (numberp (nth 8 item)) (nth 8 item) 0.0)
-)
-
-(defun gp-exp-text-item-rotation (item)
-  (if (numberp (nth 9 item)) (nth 9 item) 0.0)
-)
-
-
-;; ======================================================
-;; ATRYBUTY BLOKOW
-;; ======================================================
-
-(defun gp-exp-value-to-list (value / raw converted)
-  ;; Bez bezposredniego wywolania TYPE - patrz gp-exp-point-value-to-list.
-  (cond
-    ((vl-catch-all-error-p value) '())
-    ((not value) '())
-    ((listp value) value)
-    (T
-     (setq raw
-       (vl-catch-all-apply
-         'vlax-variant-value
-         (list value)
-       )
-     )
-     (if (not (vl-catch-all-error-p raw))
-       (gp-exp-value-to-list raw)
-       (progn
-         (setq converted
-           (vl-catch-all-apply
-             'vlax-safearray->list
-             (list value)
-           )
-         )
-         (if
-           (vl-catch-all-error-p converted)
-           (list value)
-           converted
-         )
-       )
-     )
-    )
-  )
-)
-
-(defun gp-exp-safe-invoke-list (obj method / result)
-  (setq result
-    (vl-catch-all-apply
-      'vlax-invoke
-      (list obj method)
-    )
-  )
-  (gp-exp-value-to-list result)
-)
-
-(defun gp-exp-block-attribute-data (obj id-tags z-tags / refs ref tag txt id-value z-value)
-  ;; Wynik:
-  ;; ((id . "...") (z . 123.45))
-  ;; Odczytuje atrybuty edytowalne i stale.
-  (setq id-value nil
-        z-value nil
-        refs
-          (append
-            (gp-exp-safe-invoke-list obj 'GetAttributes)
-            (gp-exp-safe-invoke-list obj 'GetConstantAttributes)
-          )
-  )
-
-  (foreach ref refs
-    (setq tag (gp-exp-safe-tag-string ref)
-          txt (gp-exp-safe-text-string ref))
-
-    (if
-      (and
-        (not id-value)
-        (member tag id-tags)
-        (gp-exp-nonempty-p txt)
-      )
-      (setq id-value (gp-exp-trim txt))
-    )
-
-    (if
-      (and
-        (not z-value)
-        (member tag z-tags)
-        (gp-exp-parse-number txt)
-      )
-      (setq z-value (gp-exp-parse-number txt))
-    )
-  )
-
-  (list
-    (cons 'id id-value)
-    (cons 'z z-value)
-  )
-)
-
-;; ======================================================
-;; TEKSTY WEWNATRZ DEFINICJI BLOKU
-;; ======================================================
-
-(defun gp-exp-label-text-p (txt / upper)
-  (setq upper (strcase (gp-exp-trim txt)))
-  (member upper
-    '(
-      "NR" "NUMER" "ID" "PKT" "PUNKT"
-      "H" "Z" "RZEDNA" "RZĘDNA"
-      "WYS" "WYS." "WYSOKOSC" "WYSOKOŚĆ"
-    )
-  )
-)
-
-(defun gp-exp-collect-block-definition-texts
-  (doc block-name visited depth / blocks block-def ent type txt nested-name result)
-  (setq result '())
-
-  (if
-    (and
-      doc
-      block-name
-      (< depth 5)
-      (not (member (strcase block-name) visited))
-    )
-    (progn
-      (setq blocks (vla-get-Blocks doc))
-      (setq block-def
-        (vl-catch-all-apply
-          'vla-Item
-          (list blocks block-name)
-        )
-      )
-
-      (if (not (vl-catch-all-error-p block-def))
-        (progn
-          (setq visited (cons (strcase block-name) visited))
-
-          (vlax-for ent block-def
-            (setq type (gp-exp-safe-object-name ent))
-
-            (cond
-              ((member type '("AcDbText" "AcDbMText"))
-               (setq txt (gp-exp-safe-text-string ent))
-               (if (gp-exp-nonempty-p txt)
-                 (setq result (cons (gp-exp-trim txt) result))
-               )
-              )
-
-              ;; Rekurencja dla blokow zagniezdzonych.
-              ((= type "AcDbBlockReference")
-               (setq nested-name
-                 (vl-catch-all-apply
-                   'vla-get-Name
-                   (list ent)
-                 )
-               )
-               (if (not (vl-catch-all-error-p nested-name))
-                 (setq result
-                   (append
-                     (gp-exp-collect-block-definition-texts
-                       doc nested-name visited (1+ depth)
-                     )
-                     result
-                   )
-                 )
-               )
-              )
-            )
-          )
-        )
-      )
-    )
-  )
-  (reverse result)
-)
-
-(defun gp-exp-block-internal-text-data (obj / name cache-pair doc texts txt z id numeric)
-  ;; Wynik:
-  ;; ((id . "...") (z . 123.45))
-  ;;
-  ;; Analizuje TEXT/MTEXT zapisane w definicji bloku bez EXPLODE.
-  ;; Wynik jest cache'owany po nazwie rzeczywistej definicji bloku.
-  (setq name
-    (vl-catch-all-apply
-      'vla-get-Name
-      (list obj)
-    )
-  )
-
-  (if (vl-catch-all-error-p name)
-    (list (cons 'id nil) (cons 'z nil))
-    (progn
-      (setq cache-pair (assoc name *gp-exp-block-text-cache*))
-      (if cache-pair
-        (cdr cache-pair)
-        (progn
-          (setq doc (vla-get-ActiveDocument (vlax-get-acad-object))
-                texts (gp-exp-collect-block-definition-texts doc name '() 0)
-                id nil
-                z nil)
-
-          ;; Najpierw szukamy rzędnej: tekst sklasyfikowany jako Z.
-          (foreach txt texts
-            (if
-              (and
-                (not z)
-                (= (gp-exp-text-category txt) "Z")
-                (gp-exp-parse-number txt)
-              )
-              (setq z (gp-exp-parse-number txt))
-            )
-          )
-
-          ;; ID: preferuj tekst z cyfra, ale nie etykiete typu "NR".
-          (foreach txt texts
-            (if
-              (and
-                (not id)
-                (= (gp-exp-text-category txt) "ID")
-                (not (gp-exp-label-text-p txt))
-                (gp-exp-has-digit-p txt)
-              )
-              (setq id txt)
-            )
-          )
-
-          ;; Awaryjnie dowolny niepusty tekst ID niebedacy etykieta.
-          (if (not id)
-            (foreach txt texts
-              (if
-                (and
-                  (not id)
-                  (= (gp-exp-text-category txt) "ID")
-                  (not (gp-exp-label-text-p txt))
-                )
-                (setq id txt)
-              )
-            )
-          )
-
-          (setq cache-pair
-            (list
-              (cons 'id id)
-              (cons 'z z)
-            )
-          )
-          (setq *gp-exp-block-text-cache*
-            (cons (cons name cache-pair) *gp-exp-block-text-cache*)
-          )
-          cache-pair
-        )
-      )
-    )
-  )
-)
-
-;; ======================================================
-;; KOLEKCJA OBIEKTOW I REKORDOW EKSPORTU
-;; ======================================================
-
-(defun gp-exp-make-record (rid kind pt obj subindex)
-  (list
-    (cons 'rid rid)
-    (cons 'kind kind)
-    (cons 'pt pt)
-    (cons 'obj obj)
-    (cons 'handle (gp-exp-safe-handle obj))
-    (cons 'subindex subindex)
-  )
-)
-
-(defun gp-exp-collect-selection
-  (ss / i ent obj type kind points p subindex rid tid item records texts object-count point-count)
-  ;; Wynik:
-  ;; (records texts object-count point-count)
-  (setq i 0
-        rid 1
-        tid 1
-        records '()
-        texts '()
-        object-count '()
-        point-count '())
-
-  (while (< i (sslength ss))
-    (setq ent (ssname ss i)
-          obj (vlax-ename->vla-object ent)
-          type (gp-exp-safe-object-name obj))
-
-    (cond
-      ((member type '("AcDbText" "AcDbMText"))
-       (setq item (gp-exp-text-item-from-object obj tid))
-       (if item
-         (progn
-           (setq texts (cons item texts))
-           (setq tid (1+ tid))
-         )
-       )
-      )
-
-      ((setq kind (gp-exp-kind-from-object-name type))
-       (setq object-count (gp-exp-list-inc object-count kind))
-       (setq points (gp-exp-extract-points obj)
-             subindex 1)
-
-       (foreach p points
-         (setq records
-           (cons
-             (gp-exp-make-record rid kind p obj subindex)
-             records
-           )
-         )
-         (setq point-count (gp-exp-list-inc point-count kind)
-               rid (1+ rid)
-               subindex (1+ subindex))
-       )
-      )
-    )
-    (setq i (1+ i))
-  )
-
-  (list
-    (reverse records)
-    (reverse texts)
-    object-count
-    point-count
-  )
-)
-
-;; ======================================================
-;; FILTROWANIE TYPOW I DUPLIKATOW
-;; ======================================================
-
-(defun gp-exp-kind-enabled-p (kind enabled-kinds)
-  (member kind enabled-kinds)
-)
-
-(defun gp-exp-filter-records (records enabled-kinds solid-mode / result record kind subindex)
-  (setq result '())
-  (foreach record records
-    (setq kind (gp-exp-record-get record 'kind)
-          subindex (gp-exp-record-get record 'subindex))
-    (if
-      (and
-        (gp-exp-kind-enabled-p kind enabled-kinds)
-        (or
-          (/= kind "SOLID")
-          (= solid-mode "4")
-          (= subindex 1)
-        )
-      )
-      (setq result (cons record result))
-    )
-  )
-  (reverse result)
-)
-
-(defun gp-exp-remove-geometry-duplicates (records mode tolerance / accepted result record pt duplicate)
-  (if (/= mode "rem")
-    records
-    (progn
-      (setq accepted '()
-            result '())
-      (foreach record records
-        (setq pt (gp-exp-record-get record 'pt)
-              duplicate
-                (vl-some
-                  '(lambda (other) (< (gp-exp-dist-2d pt other) tolerance))
-                  accepted
-                ))
-        (if (not duplicate)
-          (progn
-            (setq accepted (cons pt accepted))
-            (setq result (cons record result))
-          )
-        )
-      )
-      (reverse result)
-    )
-  )
-)
-
-;; ======================================================
-;; DANE BAZOWE ID / Z
-;; ======================================================
-
-(defun gp-exp-base-data-for-record (record id-tags z-tags / kind obj pt attrs inside id z id-source z-source)
-  (setq kind (gp-exp-record-get record 'kind)
-        obj (gp-exp-record-get record 'obj)
-        pt (gp-exp-record-get record 'pt)
-        id nil
-        z nil
-        id-source nil
-        z-source nil)
-
-  (if (= kind "INSERT")
-    (progn
-      (setq attrs (gp-exp-block-attribute-data obj id-tags z-tags)
-            inside (gp-exp-block-internal-text-data obj))
-
-      ;; ID: atrybut -> tekst w definicji.
-      (cond
-        ((cdr (assoc 'id attrs))
-         (setq id (cdr (assoc 'id attrs))
-               id-source "ATTR")
-        )
-        ((cdr (assoc 'id inside))
-         (setq id (cdr (assoc 'id inside))
-               id-source "BLOCK_TEXT")
-        )
-      )
-
-      ;; Z: atrybut -> geometria -> tekst w definicji.
-      (cond
-        ((cdr (assoc 'z attrs))
-         (setq z (cdr (assoc 'z attrs))
-               z-source "ATTR")
-        )
-        ((and (caddr pt) (> (abs (caddr pt)) 0.001))
-         (setq z (caddr pt)
-               z-source "GEOM")
-        )
-        ((cdr (assoc 'z inside))
-         (setq z (cdr (assoc 'z inside))
-               z-source "BLOCK_TEXT")
-        )
-      )
-    )
-
-    ;; Pozostale typy: Z z geometrii, ID brak.
-    (if (and (caddr pt) (> (abs (caddr pt)) 0.001))
-      (setq z (caddr pt)
-            z-source "GEOM")
-    )
-  )
-
-  (list
-    (cons 'id id)
-    (cons 'id-source id-source)
-    (cons 'z z)
-    (cons 'z-source z-source)
-  )
-)
-
-;; ======================================================
-;; ZNORMALIZOWANY RADAR WIZUALNY TEKSTOW 1:1
-;; ======================================================
-;;
-;; Zasady:
-;; - InsertionPoint i TextAlignmentPoint nie uczestnicza w dopasowaniu,
-;; - pozycja tekstu pochodzi ze srodka jego widocznego AABB,
-;; - rozmiar ramki radaru jest normalizowany, wiec wysokosc tekstu w DWG
-;;   nie rozszerza automatycznie obszaru wyszukiwania,
-;; - dokladna odleglosc jest liczona do obroconej ramki tekstu,
-;; - dopasowanie 1:1 uzywa ograniczonych sciezek powiekszajacych,
-;;   dzieki czemu rozwiazuje lokalne lancuchy bez globalnego brute force.
-;;
-;; Kandydat:
-;; (score d-center d-box rid tid text-item value)
-;; ======================================================
-
-(setq *gp-exp-radar-ambiguity-absolute* 0.10)
-(setq *gp-exp-radar-ambiguity-ratio* 1.25)
-(setq *gp-exp-radar-max-candidates* 6)
-(setq *gp-exp-radar-reference-height-min-factor* 0.15)
-(setq *gp-exp-radar-reference-height-max-factor* 0.75)
-(setq *gp-exp-radar-reference-height-default-factor* 0.40)
-(setq *gp-exp-radar-max-width-factor* 2.50)
-(setq *gp-exp-radar-min-aspect* 0.50)
-(setq *gp-exp-radar-max-aspect* 10.0)
-(setq *gp-exp-radar-center-weight* 0.10)
-(setq *gp-exp-radar-max-augment-depth* 48)
-(setq *gp-exp-radar-improvement-passes* 3)
-(setq *gp-exp-last-radar-candidate-map* nil)
-
-(defun gp-exp-map-set (map key value / pair)
-  (setq pair (assoc key map))
-  (if pair
-    (subst (cons key value) pair map)
-    (cons (cons key value) map)
-  )
-)
-
-(defun gp-exp-map-remove (map key / result pair)
-  (setq result '())
-  (foreach pair map
-    (if (/= (car pair) key)
-      (setq result (cons pair result))
-    )
-  )
-  (reverse result)
-)
-
-(defun gp-exp-radar-kind-priority (kind)
-  (cond
-    ((= kind "INSERT") 0)
-    ((= kind "POINT") 1)
-    ((= kind "CIRCLE") 2)
-    ((= kind "SOLID") 3)
-    ((= kind "LINE") 4)
-    ((= kind "POLYLINE") 4)
-    ((= kind "ARC") 4)
-    (T 9)
-  )
-)
-
-(defun gp-exp-radar-candidate-score (d-center d-box)
-  (+ d-box (* *gp-exp-radar-center-weight* d-center))
-)
-
-(defun gp-exp-radar-candidate-less-p (a b / ab bb ac bc as bs ar br at bt)
-  ;; Najpierw odleglosc od widocznej ramki, potem od jej srodka.
-  (setq ab (nth 2 a)
-        bb (nth 2 b)
-        ac (nth 1 a)
-        bc (nth 1 b)
-        as (nth 0 a)
-        bs (nth 0 b)
-        ar (nth 3 a)
-        br (nth 3 b)
-        at (nth 4 a)
-        bt (nth 4 b))
-  (cond
-    ((not (equal ab bb 1e-9)) (< ab bb))
-    ((not (equal ac bc 1e-9)) (< ac bc))
-    ((not (equal as bs 1e-9)) (< as bs))
-    ((/= ar br) (< ar br))
-    (T (< at bt))
-  )
-)
-
-(defun gp-exp-radar-record-key-less-p (a b / an bn ap bp as bs ar br)
-  (setq an (nth 0 a)
-        bn (nth 0 b)
-        ap (nth 1 a)
-        bp (nth 1 b)
-        as (nth 2 a)
-        bs (nth 2 b)
-        ar (nth 3 a)
-        br (nth 3 b))
-  (cond
-    ((/= an bn) (< an bn))
-    ((/= ap bp) (< ap bp))
-    ((not (equal as bs 1e-9)) (< as bs))
-    (T (< ar br))
-  )
-)
-
-(defun gp-exp-stable-sort (items predicate)
-  (if items (vl-sort items predicate) '())
-)
-
-(defun gp-exp-take-first (items limit / result count)
-  (setq result '()
-        count 0)
-  (while (and items (< count limit))
-    (setq result (cons (car items) result)
-          items (cdr items)
-          count (1+ count))
-  )
-  (reverse result)
-)
-
-(defun gp-exp-radar-candidate-value (category item / value)
-  (setq value
-    (if (= category "Z")
-      (gp-exp-parse-number (gp-exp-text-item-value item))
-      (gp-exp-trim (gp-exp-text-item-value item))
-    )
-  )
-  (if
-    (and value (or (= category "Z") (gp-exp-nonempty-p value)))
-    value
-    nil
-  )
-)
-
-(defun gp-exp-prepare-radar-texts (texts category / result item value)
-  (setq result '())
-  (foreach item texts
-    (if (= (nth 3 item) category)
-      (progn
-        (setq value (gp-exp-radar-candidate-value category item))
-        (if value
-          (setq result (cons (cons value item) result))
-        )
-      )
-    )
-  )
-  (reverse result)
-)
-
-(defun gp-exp-filter-texts-category (texts category / result item)
-  (setq result '())
-  (foreach item texts
-    (if (= (nth 3 item) category)
-      (setq result (cons item result))
-    )
-  )
-  (reverse result)
-)
-
-(defun gp-exp-radar-median (values / indexes sorted count middle)
-  ;; VL-SORT-I zachowuje duplikaty, co jest wazne dla mediany wysokosci.
-  (if (not values)
-    nil
-    (progn
-      (setq indexes (vl-sort-i values '<)
-            sorted (mapcar '(lambda (index) (nth index values)) indexes)
-            count (length sorted)
-            middle (fix (/ count 2)))
-      (if (= (rem count 2) 1)
-        (nth middle sorted)
-        (/ (+ (nth (1- middle) sorted) (nth middle sorted)) 2.0)
-      )
-    )
-  )
-)
-
-(defun gp-exp-radar-reference-height-from-items
-  (items radius / heights item height median min-height max-height default-height)
-  (setq heights '())
-  (foreach item items
-    (setq height (gp-exp-text-item-height item))
-    (if (> height 1e-9)
-      (setq heights (cons height heights))
-    )
-  )
-  (setq median (gp-exp-radar-median heights)
-        min-height (* *gp-exp-radar-reference-height-min-factor* radius)
-        max-height (* *gp-exp-radar-reference-height-max-factor* radius)
-        default-height (* *gp-exp-radar-reference-height-default-factor* radius))
-  (if (not median) (setq median default-height))
-  (max min-height (min max-height median))
-)
-
-(defun gp-exp-radar-reference-height
-  (prepared radius / items prepared-item)
-  (setq items '())
-  (foreach prepared-item prepared
-    (setq items (cons (cdr prepared-item) items))
-  )
-  (gp-exp-radar-reference-height-from-items items radius)
-)
-
-(defun gp-exp-radar-normalized-frame
-  (item reference-height radius / center angle raw-width raw-height aspect width height half-width half-height ca sa world-half-x world-half-y)
-  ;; Ramka jest centrowana na widocznym napisie. Oryginalna wysokosc sluzy
-  ;; tylko do odczytu proporcji szerokosc/wysokosc.
-  (setq center (gp-exp-text-item-center item)
-        angle (gp-exp-text-item-rotation item)
-        raw-width (max 1e-9 (gp-exp-text-item-width item))
-        raw-height (max 1e-9 (gp-exp-text-item-height item))
-        aspect (/ raw-width raw-height)
-        aspect (max *gp-exp-radar-min-aspect*
-                    (min *gp-exp-radar-max-aspect* aspect))
-        height reference-height
-        width (min (* *gp-exp-radar-max-width-factor* radius)
-                   (* height aspect))
-        width (max (* *gp-exp-radar-min-aspect* height) width)
-        half-width (/ width 2.0)
-        half-height (/ height 2.0)
-        ca (abs (cos angle))
-        sa (abs (sin angle))
-        world-half-x (+ (* ca half-width) (* sa half-height))
-        world-half-y (+ (* sa half-width) (* ca half-height)))
-  ;; Frame:
-  ;; center angle half-width half-height min-x max-x min-y max-y item
-  (list
-    center
-    angle
-    half-width
-    half-height
-    (- (car center) world-half-x radius)
-    (+ (car center) world-half-x radius)
-    (- (cadr center) world-half-y radius)
-    (+ (cadr center) world-half-y radius)
-    item
-  )
-)
-
-(defun gp-exp-radar-distance-info
-  (pt frame radius / center angle half-width half-height local-pt cx cy d-box d-center score)
-  ;; Wynik: (d-box d-center score), albo nil.
-  (setq center (nth 0 frame)
-        angle (nth 1 frame)
-        half-width (nth 2 frame)
-        half-height (nth 3 frame)
-        local-pt (gp-exp-world-to-local-2d pt center angle)
-        cx (max (- half-width) (min (car local-pt) half-width))
-        cy (max (- half-height) (min (cadr local-pt) half-height))
-        d-box (distance
-                (list (car local-pt) (cadr local-pt))
-                (list cx cy))
-        d-center (distance '(0.0 0.0)
-                           (list (car local-pt) (cadr local-pt))))
-  (if (<= d-box radius)
-    (progn
-      (setq score (gp-exp-radar-candidate-score d-center d-box))
-      (list d-box d-center score)
-    )
-    nil
-  )
-)
-
-(defun gp-exp-near-text-info
-  (pt items radius / reference-height count nearest nearest-score item frame info)
-  ;; Uzywane w raporcie konfliktow Z dla obiektow z wlasna rzedna.
-  (setq reference-height
-          (gp-exp-radar-reference-height-from-items items radius)
-        count 0
-        nearest nil
-        nearest-score nil)
-  (foreach item items
-    (setq frame (gp-exp-radar-normalized-frame item reference-height radius))
-    (if
-      (and
-        (<= (nth 4 frame) (car pt))
-        (>= (nth 5 frame) (car pt))
-        (<= (nth 6 frame) (cadr pt))
-        (>= (nth 7 frame) (cadr pt))
-      )
-      (progn
-        (setq info (gp-exp-radar-distance-info pt frame radius))
-        (if info
-          (progn
-            (setq count (1+ count))
-            (if
-              (or (not nearest-score) (< (nth 2 info) nearest-score))
-              (setq nearest item
-                    nearest-score (nth 2 info))
-            )
-          )
-        )
-      )
-    )
-  )
-  (list count nearest)
-)
-
-(defun gp-exp-radar-record-x-less-p (a b / ax bx ar br)
-  (setq ax (nth 0 a)
-        bx (nth 0 b)
-        ar (nth 1 a)
-        br (nth 1 b))
-  (if (not (equal ax bx 1e-9)) (< ax bx) (< ar br))
-)
-
-(defun gp-exp-radar-text-x-less-p (a b / ax bx at bt)
-  ;; Tekst pomocniczy: min-x max-x min-y max-y tid prepared-item frame
-  (setq ax (nth 0 a)
-        bx (nth 0 b)
-        at (nth 4 a)
-        bt (nth 4 b))
-  (if (not (equal ax bx 1e-9)) (< ax bx) (< at bt))
-)
-
-(defun gp-exp-radar-record-allowed-p (category base z-mode)
-  (if (= category "ID")
-    (not (cdr (assoc 'id base)))
-    (or (= z-mode "z_text") (not (cdr (assoc 'z base))))
-  )
-)
-
-(defun gp-exp-build-radar-candidate-map
-  (
-    records texts radius category base-map z-mode
-    /
-    result prepared reference-height record rid pt base
-    record-items record-entry text-items text-entry
-    prepared-item item value frame px py
-    active new-active remaining candidates info
-    d-box d-center score sorted
-  )
-  (setq result '()
-        prepared (gp-exp-prepare-radar-texts texts category)
-        reference-height (gp-exp-radar-reference-height prepared radius)
-        record-items '()
-        text-items '())
-
-  (foreach record records
-    (setq rid (gp-exp-record-get record 'rid)
-          pt (gp-exp-record-get record 'pt)
-          base (gp-exp-map-get base-map rid))
-    (if (gp-exp-radar-record-allowed-p category base z-mode)
-      (setq record-items (cons (list (car pt) rid record) record-items))
-    )
-  )
-
-  (foreach prepared-item prepared
-    (setq item (cdr prepared-item)
-          frame (gp-exp-radar-normalized-frame
-                  item reference-height radius))
-    (setq text-items
-      (cons
-        (list
-          (nth 4 frame)
-          (nth 5 frame)
-          (nth 6 frame)
-          (nth 7 frame)
-          (gp-exp-text-item-id item)
-          prepared-item
-          frame
-        )
-        text-items
-      )
-    )
-  )
-
-  (setq record-items
-          (gp-exp-stable-sort record-items 'gp-exp-radar-record-x-less-p)
-        remaining
-          (gp-exp-stable-sort text-items 'gp-exp-radar-text-x-less-p)
-        active '())
-
-  (foreach record-entry record-items
-    (setq px (nth 0 record-entry)
-          rid (nth 1 record-entry)
-          record (nth 2 record-entry)
-          pt (gp-exp-record-get record 'pt)
-          py (cadr pt)
-          candidates '())
-
-    (while (and remaining (<= (nth 0 (car remaining)) px))
-      (setq active (cons (car remaining) active)
-            remaining (cdr remaining))
-    )
-
-    (setq new-active '())
-    (foreach text-entry active
-      (if (>= (nth 1 text-entry) px)
-        (setq new-active (cons text-entry new-active))
-      )
-    )
-    (setq active new-active)
-
-    (foreach text-entry active
-      (if (and (<= (nth 2 text-entry) py)
-               (>= (nth 3 text-entry) py))
-        (progn
-          (setq prepared-item (nth 5 text-entry)
-                value (car prepared-item)
-                item (cdr prepared-item)
-                frame (nth 6 text-entry)
-                info (gp-exp-radar-distance-info pt frame radius))
-          (if info
-            (progn
-              (setq d-box (nth 0 info)
-                    d-center (nth 1 info)
-                    score (nth 2 info))
-              (setq candidates
-                (cons
-                  (list score d-center d-box rid
-                        (gp-exp-text-item-id item) item value)
-                  candidates
-                )
-              )
-            )
-          )
-        )
-      )
-    )
-
-    (if candidates
-      (progn
-        (setq sorted
-          (gp-exp-stable-sort candidates 'gp-exp-radar-candidate-less-p))
-        (setq sorted
-          (gp-exp-take-first sorted *gp-exp-radar-max-candidates*))
-        (setq result (cons (cons rid sorted) result))
-      )
-    )
-  )
-  result
-)
-
-(defun gp-exp-build-radar-record-order
-  (records candidate-map / keys record rid kind candidates best-score)
-  (setq keys '())
-  (foreach record records
-    (setq rid (gp-exp-record-get record 'rid)
-          kind (gp-exp-record-get record 'kind)
-          candidates (gp-exp-map-get candidate-map rid))
-    (if candidates
-      (progn
-        (setq best-score (nth 0 (car candidates)))
-        (setq keys
-          (cons
-            (list
-              (length candidates)
-              (gp-exp-radar-kind-priority kind)
-              best-score
-              rid
-            )
-            keys
-          )
-        )
-      )
-    )
-  )
-  (mapcar
-    '(lambda (key) (nth 3 key))
-    (gp-exp-stable-sort keys 'gp-exp-radar-record-key-less-p)
-  )
-)
-
-(defun gp-exp-radar-augment
-  (rid candidate-map rid-map tid-map seen-tids depth / candidates candidate tid owner state success)
-  ;; Klasyczna sciezka powiekszajaca w lokalnym grafie kandydatow.
-  ;; Seen-tids i limit glebokosci gwarantuja zakonczenie.
-  (setq candidates (gp-exp-map-get candidate-map rid)
-        success nil)
-  (while (and candidates (not success))
-    (setq candidate (car candidates)
-          tid (nth 4 candidate))
-    (if (not (member tid seen-tids))
-      (progn
-        (setq seen-tids (cons tid seen-tids)
-              owner (gp-exp-map-get tid-map tid))
-        (cond
-          ((not owner)
-           (setq rid-map (gp-exp-map-set rid-map rid candidate)
-                 tid-map (gp-exp-map-set tid-map tid rid)
-                 success T)
-          )
-          ((< depth *gp-exp-radar-max-augment-depth*)
-           (setq state
-             (gp-exp-radar-augment
-               owner candidate-map rid-map tid-map seen-tids (1+ depth)))
-           (setq rid-map (nth 1 state)
-                 tid-map (nth 2 state)
-                 seen-tids (nth 3 state))
-           (if (car state)
-             (setq rid-map (gp-exp-map-set rid-map rid candidate)
-                   tid-map (gp-exp-map-set tid-map tid rid)
-                   success T)
-           )
-          )
-        )
-      )
-    )
-    (setq candidates (cdr candidates))
-  )
-  (list success rid-map tid-map seen-tids)
-)
-
-(defun gp-exp-radar-find-candidate-by-tid
-  (candidates tid / result candidate)
-  (setq result nil)
-  (while (and candidates (not result))
-    (setq candidate (car candidates))
-    (if (= (nth 4 candidate) tid)
-      (setq result candidate)
-    )
-    (setq candidates (cdr candidates))
-  )
-  result
-)
-
-(defun gp-exp-radar-improve-matching
-  (record-order candidate-map rid-map tid-map / pass changed rid current current-score current-tid candidates candidate candidate-score candidate-tid owner owner-current reverse old-total new-total swapped)
-  ;; Zachowujemy liczbe przypisan, a przez kilka ograniczonych przebiegow
-  ;; poprawiamy laczny koszt wolnym ruchem albo bezposrednia zamiana para.
-  (setq pass 0
-        changed T)
-  (while (and changed (< pass *gp-exp-radar-improvement-passes*))
-    (setq changed nil
-          pass (1+ pass))
-    (foreach rid record-order
-      (setq current (gp-exp-map-get rid-map rid)
-            swapped nil)
-      (if current
-        (progn
-          (setq current-score (nth 0 current)
-                current-tid (nth 4 current)
-                candidates (gp-exp-map-get candidate-map rid))
-          (while (and candidates (not swapped))
-            (setq candidate (car candidates)
-                  candidate-score (nth 0 candidate)
-                  candidate-tid (nth 4 candidate))
-            (if
-              (and
-                (/= candidate-tid current-tid)
-                (< candidate-score (- current-score 1e-9))
-              )
-              (progn
-                (setq owner (gp-exp-map-get tid-map candidate-tid))
-                (cond
-                  ((not owner)
-                   (setq tid-map (gp-exp-map-remove tid-map current-tid)
-                         rid-map (gp-exp-map-set rid-map rid candidate)
-                         tid-map (gp-exp-map-set tid-map candidate-tid rid)
-                         changed T
-                         swapped T)
-                  )
-                  ((/= owner rid)
-                   (setq owner-current (gp-exp-map-get rid-map owner)
-                         reverse
-                           (gp-exp-radar-find-candidate-by-tid
-                             (gp-exp-map-get candidate-map owner)
-                             current-tid))
-                   (if (and owner-current reverse)
-                     (progn
-                       (setq old-total (+ current-score (nth 0 owner-current))
-                             new-total (+ candidate-score (nth 0 reverse)))
-                       (if (< new-total (- old-total 1e-9))
-                         (setq rid-map (gp-exp-map-set rid-map rid candidate)
-                               rid-map (gp-exp-map-set rid-map owner reverse)
-                               tid-map (gp-exp-map-set tid-map candidate-tid rid)
-                               tid-map (gp-exp-map-set tid-map current-tid owner)
-                               changed T
-                               swapped T)
-                       )
-                     )
-                   )
-                  )
-                )
-              )
-            )
-            (setq candidates (cdr candidates))
-          )
-        )
-      )
-    )
-  )
-  (list rid-map tid-map)
-)
-
-(defun gp-exp-radar-first-other-candidate (candidates assigned-tid / candidate result)
-  (setq result nil)
-  (while (and candidates (not result))
-    (setq candidate (car candidates))
-    (if (/= (nth 4 candidate) assigned-tid)
-      (setq result candidate)
-    )
-    (setq candidates (cdr candidates))
-  )
-  result
-)
-
-(defun gp-exp-radar-match-ambiguous-p
-  (assigned alternative / assigned-score alternative-score delta ratio lower higher)
-  (if (not alternative)
-    nil
-    (progn
-      (setq assigned-score (nth 0 assigned)
-            alternative-score (nth 0 alternative)
-            delta (abs (- assigned-score alternative-score))
-            lower (min assigned-score alternative-score)
-            higher (max assigned-score alternative-score))
-      (setq ratio
-        (if (> lower 1e-9)
-          (/ higher lower)
-          (if (<= higher *gp-exp-radar-ambiguity-absolute*) 1.0 999999.0)
-        )
-      )
-      (or
-        (<= delta *gp-exp-radar-ambiguity-absolute*)
-        (<= ratio *gp-exp-radar-ambiguity-ratio*)
-      )
-    )
-  )
-)
-
-(defun gp-exp-radar-entry-from-candidate
-  (candidate candidates / tid alternative ambiguous reassigned)
-  (setq tid (nth 4 candidate)
-        alternative (gp-exp-radar-first-other-candidate candidates tid)
-        ambiguous (gp-exp-radar-match-ambiguous-p candidate alternative)
-        reassigned (and candidates (/= tid (nth 4 (car candidates)))))
-  (list
-    (cons 'value (nth 6 candidate))
-    (cons 'source "RADAR")
-    (cons 'text-object (gp-exp-text-item-object (nth 5 candidate)))
-    (cons 'text-id tid)
-    (cons 'distance (nth 2 candidate))
-    (cons 'center-distance (nth 1 candidate))
-    (cons 'edge-distance (nth 2 candidate))
-    (cons 'box-distance (nth 2 candidate))
-    (cons 'match-score (nth 0 candidate))
-    (cons 'candidate-count (length candidates))
-    (cons 'ambiguous ambiguous)
-    (cons 'reassigned reassigned)
-  )
-)
-
-(defun gp-exp-assign-radar-unique
-  (
-    records texts radius category base-map z-mode
-    /
-    candidate-map record-order rid-map tid-map state rid improved
-    result record candidate candidates
-  )
-  (setq candidate-map
-    (gp-exp-build-radar-candidate-map
-      records texts radius category base-map z-mode))
-  (setq *gp-exp-last-radar-candidate-map* candidate-map)
-
-  (setq record-order
-          (gp-exp-build-radar-record-order records candidate-map)
-        rid-map '()
-        tid-map '())
-
-  ;; Kazdy przebieg szuka sciezki tylko wewnatrz polaczonej lokalnej grupy.
-  (foreach rid record-order
-    (if (not (gp-exp-map-get rid-map rid))
-      (progn
-        (setq state
-          (gp-exp-radar-augment
-            rid candidate-map rid-map tid-map '() 0))
-        (setq rid-map (nth 1 state)
-              tid-map (nth 2 state))
-      )
-    )
-  )
-
-  (setq improved
-    (gp-exp-radar-improve-matching
-      record-order candidate-map rid-map tid-map)
-        rid-map (car improved)
-        tid-map (cadr improved))
-
-  (setq result '())
-  (foreach record records
-    (setq rid (gp-exp-record-get record 'rid)
-          candidate (gp-exp-map-get rid-map rid)
-          candidates (gp-exp-map-get candidate-map rid))
-    (if candidate
-      (setq result
-        (cons
-          (cons rid (gp-exp-radar-entry-from-candidate candidate candidates))
-          result
-        )
-      )
-    )
-  )
-  result
-)
-
-(defun gp-exp-assign-radar-reusable
-  (records texts radius category base-map z-mode / candidate-map result record rid candidates candidate)
-  (setq candidate-map
-    (gp-exp-build-radar-candidate-map
-      records texts radius category base-map z-mode))
-  (setq *gp-exp-last-radar-candidate-map* candidate-map
-        result '())
-  (foreach record records
-    (setq rid (gp-exp-record-get record 'rid)
-          candidates (gp-exp-map-get candidate-map rid))
-    (if candidates
-      (progn
-        (setq candidate (car candidates))
-        (setq result
-          (cons
-            (cons rid (gp-exp-radar-entry-from-candidate candidate candidates))
-            result
-          )
-        )
-      )
-    )
-  )
-  result
-)
-
-
-;; ======================================================
-;; ROZWIAZANIE ID / Z I STATYSTYKI
-;; ======================================================
-
-(defun gp-exp-auto-id (prefix number)
-  (strcat prefix (itoa number))
-)
-
-(defun gp-exp-id-key (value)
-  ;; Klucz porownawczy ID: bez znaczenia wielkosci liter i spacji brzegowych.
-  (if (gp-exp-nonempty-p value)
-    (strcase (gp-exp-trim value))
-    nil
-  )
-)
-
-(defun gp-exp-make-id-entry (value source radar-entry)
-  ;; Wspolna struktura wpisu ID. Zrodlo pozostaje oryginalne nawet wtedy,
-  ;; gdy duplikat dostanie suffix (1), (2), ...
-  (list
-    (cons 'value value)
-    (cons 'source source)
-    (cons 'text-object
-      (if (equal source "RADAR")
-        (cdr (assoc 'text-object radar-entry))
-        nil
-      )
-    )
-    (cons 'ambiguous
-      (if (equal source "RADAR")
-        (cdr (assoc 'ambiguous radar-entry))
-        nil
-      )
-    )
-    (cons 'reassigned
-      (if (equal source "RADAR")
-        (cdr (assoc 'reassigned radar-entry))
-        nil
-      )
-    )
-    (cons 'candidate-count
-      (if (equal source "RADAR")
-        (cdr (assoc 'candidate-count radar-entry))
-        0
-      )
-    )
-    (cons 'match-score
-      (if (equal source "RADAR")
-        (cdr (assoc 'match-score radar-entry))
-        nil
-      )
-    )
-    (cons 'original-id nil)
-    (cons 'duplicate-renamed nil)
-  )
-)
-
-(defun gp-exp-build-id-index
-  (records id-map / counts labels occupied groups duplicate-records record rid entry value key current pair)
-  ;; Buduje indeks wszystkich znalezionych ID przed numeracja AUTO.
-  ;; Wynik:
-  ;; (counts labels occupied-keys duplicate-groups duplicate-records)
-  (setq counts '()
-        labels '()
-        occupied '()
-        groups 0
-        duplicate-records 0)
-
-  (foreach record records
-    (setq rid (gp-exp-record-get record 'rid)
-          entry (gp-exp-map-get id-map rid)
-          value (if entry (cdr (assoc 'value entry)) nil)
-          key (gp-exp-id-key value))
-
-    (if key
-      (progn
-        (setq current (gp-exp-map-get counts key))
-        (setq counts
-          (gp-exp-map-set counts key (1+ (if current current 0)))
-        )
-
-        (if (not (gp-exp-map-get labels key))
-          (setq labels
-            (gp-exp-map-set labels key (gp-exp-trim value))
-          )
-        )
-
-        (if (not (member key occupied))
-          (setq occupied (cons key occupied))
-        )
-      )
-    )
-  )
-
-  (foreach pair counts
-    (if (> (cdr pair) 1)
-      (setq groups (1+ groups)
-            duplicate-records (+ duplicate-records (cdr pair)))
-    )
-  )
-
-  (list counts labels occupied groups duplicate-records)
-)
-
-(defun gp-exp-allocate-auto-id
-  (prefix next-number occupied / value key)
-  ;; Zwraca: (nowe-id nastepny-licznik nowa-lista-zajetych-kluczy).
-  ;; AUTO nie moze zajac nazwy, ktora juz istnieje w danych zrodlowych
-  ;; ani nazwy wygenerowanej przy rozroznianiu duplikatow.
-  (setq value (gp-exp-auto-id prefix next-number)
-        next-number (1+ next-number)
-        key (gp-exp-id-key value))
-
-  (while (member key occupied)
-    (setq value (gp-exp-auto-id prefix next-number)
-          next-number (1+ next-number)
-          key (gp-exp-id-key value))
-  )
-
-  (list value next-number (cons key occupied))
-)
 
 (defun gp-exp-resolve-records
   (
     records texts radius id-tags z-tags unique-texts z-mode
-    renum-all fix-dupes auto-prefix auto-start
+    renum-all auto-missing fix-dupes auto-prefix auto-start
     /
     base-map record rid base
     radar-id-map radar-z-map radar-z-candidate-map
     raw-id-map final-id-map final-z-map
     raw-id raw-source radar-entry raw-entry
     id-index id-counts id-labels occupied-id-keys
-    duplicate-groups duplicate-records duplicate-next-map
+    duplicate-groups duplicate-records duplicate-next-map missing-id-records
     key count base-id suffix candidate candidate-key
     allocation next-auto id-value
     raw-z z-source z-entry
@@ -1989,11 +123,12 @@
   ;; 4. Finalne ID.
   ;; - nowa numeracja wszystkich: AUTO dla kazdego rekordu,
   ;; - normalny tryb: najpierw rozrozniamy powtarzajace sie ID,
-  ;;   dopiero potem nadajemy AUTO rekordom bez ID.
+  ;;   potem - tylko gdy auto-missing=1 - nadajemy AUTO rekordom bez ID.
   (setq final-id-map '()
         next-auto auto-start
         duplicate-groups 0
-        duplicate-records 0)
+        duplicate-records 0
+        missing-id-records 0)
 
   (if (= renum-all "1")
     (progn
@@ -2089,31 +224,48 @@
         )
       )
 
-      ;; 4b. Dopiero teraz AUTO dla rekordow bez znalezionego ID.
-      ;; Lista occupied-id-keys zawiera juz wszystkie ID zrodlowe i suffixy,
-      ;; wiec AUTO nie moze ich przypadkiem zajac.
+      ;; 4b. Fallback dla rekordow bez znalezionego ID.
+      ;;
+      ;; auto-missing = "1":
+      ;;   nadaj AUTO z Prefiks/Start i omijaj wszystkie zajete ID.
+      ;;
+      ;; auto-missing = "0":
+      ;;   zachowaj rekord, ale ID pozostaw puste. Zrodlo MISSING pozwala
+      ;;   pokazac taki przypadek jawnie w raporcie i bezpiecznie zapisac TXT.
       (foreach record records
         (setq rid (gp-exp-record-get record 'rid)
               raw-entry (gp-exp-map-get final-id-map rid)
               raw-id (if raw-entry (cdr (assoc 'value raw-entry)) nil))
 
         (if (not (gp-exp-nonempty-p raw-id))
-          (progn
-            (setq allocation
-              (gp-exp-allocate-auto-id
-                auto-prefix
-                next-auto
-                occupied-id-keys)
-            )
-            (setq id-value (nth 0 allocation)
-                  next-auto (nth 1 allocation)
-                  occupied-id-keys (nth 2 allocation))
+          (if (= auto-missing "1")
+            (progn
+              (setq allocation
+                (gp-exp-allocate-auto-id
+                  auto-prefix
+                  next-auto
+                  occupied-id-keys)
+              )
+              (setq id-value (nth 0 allocation)
+                    next-auto (nth 1 allocation)
+                    occupied-id-keys (nth 2 allocation))
 
-            (setq final-id-map
-              (gp-exp-map-set
-                final-id-map
-                rid
-                (gp-exp-make-id-entry id-value "AUTO" nil)
+              (setq final-id-map
+                (gp-exp-map-set
+                  final-id-map
+                  rid
+                  (gp-exp-make-id-entry id-value "AUTO" nil)
+                )
+              )
+            )
+            (progn
+              (setq missing-id-records (1+ missing-id-records))
+              (setq final-id-map
+                (gp-exp-map-set
+                  final-id-map
+                  rid
+                  (gp-exp-make-id-entry "" "MISSING" nil)
+                )
               )
             )
           )
@@ -2268,6 +420,7 @@
     (cons 'z-map final-z-map)
     (cons 'conflicts (reverse conflicts))
     (cons 'next-auto next-auto)
+    (cons 'missing-id-records missing-id-records)
     (cons 'duplicate-id-groups duplicate-groups)
     (cons 'duplicate-id-records duplicate-records)
     (cons 'duplicate-id-renamed
@@ -2275,75 +428,14 @@
   )
 )
 
-(defun gp-exp-count-source-for-kind (records map kind source / count record rid entry)
-  (setq count 0)
-  (foreach record records
-    (if (= (gp-exp-record-get record 'kind) kind)
-      (progn
-        (setq rid (gp-exp-record-get record 'rid)
-              entry (gp-exp-map-get map rid))
-        (if (= (cdr (assoc 'source entry)) source)
-          (setq count (1+ count))
-        )
-      )
-    )
-  )
-  count
-)
 
-(defun gp-exp-record-count-kind (records kind / count record)
-  (setq count 0)
-  (foreach record records
-    (if (= (gp-exp-record-get record 'kind) kind)
-      (setq count (1+ count))
-    )
+(defun gp-exp-stat-line
+  (records id-map z-map kind /
+    obj-count point-count
+    ia ib ir iauto imissing
+    za zb zg zr zz
+    amb-id amb-z
   )
-  count
-)
-
-(defun gp-exp-object-count-kind (records kind / handles record handle)
-  (setq handles '())
-  (foreach record records
-    (if (= (gp-exp-record-get record 'kind) kind)
-      (progn
-        (setq handle (gp-exp-record-get record 'handle))
-        (if (not (member handle handles))
-          (setq handles (cons handle handles))
-        )
-      )
-    )
-  )
-  (length handles)
-)
-
-(defun gp-exp-count-ambiguous-for-kind (records map kind / count record rid entry)
-  (setq count 0)
-  (foreach record records
-    (if (= (gp-exp-record-get record 'kind) kind)
-      (progn
-        (setq rid (gp-exp-record-get record 'rid)
-              entry (gp-exp-map-get map rid))
-        (if (and entry (cdr (assoc 'ambiguous entry)))
-          (setq count (1+ count))
-        )
-      )
-    )
-  )
-  count
-)
-
-(defun gp-exp-count-ambiguous-total (map / count pair entry)
-  (setq count 0)
-  (foreach pair map
-    (setq entry (cdr pair))
-    (if (and entry (cdr (assoc 'ambiguous entry)))
-      (setq count (1+ count))
-    )
-  )
-  count
-)
-
-(defun gp-exp-stat-line (records id-map z-map kind / obj-count point-count ia ib ir iauto za zb zg zr zz amb-id amb-z)
   (setq obj-count (gp-exp-object-count-kind records kind)
         point-count (gp-exp-record-count-kind records kind)
 
@@ -2351,6 +443,7 @@
         ib (gp-exp-count-source-for-kind records id-map kind "BLOCK_TEXT")
         ir (gp-exp-count-source-for-kind records id-map kind "RADAR")
         iauto (gp-exp-count-source-for-kind records id-map kind "AUTO")
+        imissing (gp-exp-count-source-for-kind records id-map kind "MISSING")
 
         za (gp-exp-count-source-for-kind records z-map kind "ATTR")
         zb (gp-exp-count-source-for-kind records z-map kind "BLOCK_TEXT")
@@ -2370,6 +463,7 @@
     " blok=" (itoa ib)
     " tekst=" (itoa ir)
     " auto=" (itoa iauto)
+    " brak=" (itoa imissing)
     " | Z: attr=" (itoa za)
     " blok=" (itoa zb)
     " geom=" (itoa zg)
@@ -2380,11 +474,18 @@
   )
 )
 
-(defun gp-exp-total-source-summary (records id-map z-map / ia ib ir iauto za zb zg zr zz kind amb-id amb-z)
+
+(defun gp-exp-total-source-summary
+  (records id-map z-map /
+    ia ib ir iauto imissing
+    za zb zg zr zz
+    kind amb-id amb-z
+  )
   (setq ia (gp-exp-count-source-for-kind records id-map "INSERT" "ATTR")
         ib (gp-exp-count-source-for-kind records id-map "INSERT" "BLOCK_TEXT")
         ir 0
         iauto 0
+        imissing 0
         za (gp-exp-count-source-for-kind records z-map "INSERT" "ATTR")
         zb (gp-exp-count-source-for-kind records z-map "INSERT" "BLOCK_TEXT")
         zg 0
@@ -2394,6 +495,7 @@
   (foreach kind '("POINT" "INSERT" "LINE" "POLYLINE" "ARC" "CIRCLE" "SOLID")
     (setq ir (+ ir (gp-exp-count-source-for-kind records id-map kind "RADAR"))
           iauto (+ iauto (gp-exp-count-source-for-kind records id-map kind "AUTO"))
+          imissing (+ imissing (gp-exp-count-source-for-kind records id-map kind "MISSING"))
           zg (+ zg (gp-exp-count-source-for-kind records z-map kind "GEOM"))
           zr (+ zr (gp-exp-count-source-for-kind records z-map kind "RADAR"))
           zz (+ zz (gp-exp-count-source-for-kind records z-map kind "ZERO")))
@@ -2408,6 +510,7 @@
     " tekst-bloku=" (itoa ib)
     " tekst-obok=" (itoa ir)
     " auto=" (itoa iauto)
+    " brak=" (itoa imissing)
     " | Z: atrybut=" (itoa za)
     " tekst-bloku=" (itoa zb)
     " geometria=" (itoa zg)
@@ -2418,90 +521,6 @@
   )
 )
 
-;; ======================================================
-;; PODGLAD KONFLIKTOW
-;; ======================================================
-
-(defun gp-exp-show-point (pt / acad margin p1 p2)
-  (if pt
-    (progn
-      (setq acad (vlax-get-acad-object)
-            margin 5.0
-            p1 (list (- (car pt) margin) (- (cadr pt) margin) 0.0)
-            p2 (list (+ (car pt) margin) (+ (cadr pt) margin) 0.0))
-      (vl-catch-all-apply
-        'vla-ZoomWindow
-        (list acad (vlax-3d-point p1) (vlax-3d-point p2))
-      )
-    )
-  )
-)
-
-(defun gp-exp-show-conflict (conflict / pt source-object text-object ss ename obj)
-  (if conflict
-    (progn
-      (setq pt (nth 0 conflict)
-            source-object (nth 2 conflict)
-            text-object (nth 3 conflict)
-            ss (ssadd))
-
-      (foreach obj (list source-object text-object)
-        (if obj
-          (progn
-            (setq ename
-              (vl-catch-all-apply
-                'vlax-vla-object->ename
-                (list obj)
-              )
-            )
-            (if
-              (and
-                (not (vl-catch-all-error-p ename))
-                ename
-                (entget ename)
-              )
-              (ssadd ename ss)
-            )
-          )
-        )
-      )
-
-      (if (> (sslength ss) 0)
-        (sssetfirst nil ss)
-      )
-      (gp-exp-show-point pt)
-    )
-  )
-)
-
-;; ======================================================
-;; DCL
-;; ======================================================
-
-(defun gp-exp-write-type-toggle (file key label object-count point-count / default-on)
-  ;; Domyslnie radar analizuje typowe pikiety: POINT i INSERT.
-  ;; Geometria liniowa moze tworzyc tysiace wierzcholkow, dlatego
-  ;; uzytkownik wlacza ja swiadomie po otwarciu dialogu.
-  (setq default-on
-    (and
-      (> point-count 0)
-      (member key '("use_point" "use_insert"))
-    )
-  )
-
-  (write-line
-    (strcat
-      "      : toggle { key = \"" key "\"; label = \""
-      label
-      " | obiekty=" (itoa object-count)
-      " punkty=" (itoa point-count)
-      "\"; value = \"" (if default-on "1" "0") "\";"
-      (if (> point-count 0) "" " is_enabled = false;")
-      " }"
-    )
-    file
-  )
-)
 
 (defun gp-exp-build-dcl (object-count point-count / path file)
   (setq path (vl-filename-mktemp "geoprofi_export_v23.dcl")
@@ -2556,10 +575,11 @@
   (write-line "      }" file)
 
   (write-line "      : boxed_column { label = \"Numeracja ID\";" file)
-  (write-line "        : toggle { key = \"renum_all\"; label = \"Nowa numeracja wszystkich\"; value = \"0\"; }" file)
+  (write-line "        : toggle { key = \"auto_missing\"; label = \"Numeruj punkty bez znalezionego ID\"; value = \"1\"; }" file)
   (write-line "        : row { : edit_box { key = \"a_p\"; label = \"Prefiks:\"; edit_width = 10; value = \"P_\"; }" file)
   (write-line "                : edit_box { key = \"a_s\"; label = \"Start:\"; edit_width = 8; value = \"1\"; } }" file)
-  (write-line "        : text { label = \"Prefiks/Start dotyczy tez AUTO dla punktow bez ID.\"; }" file)
+  (write-line "        : toggle { key = \"renum_all\"; label = \"Nowa numeracja wszystkich\"; value = \"0\"; }" file)
+  (write-line "        : text { label = \"Nowa numeracja wszystkich uzywa tego samego Prefiks/Start.\"; }" file)
   (write-line "        : toggle { key = \"fix_dupes\"; label = \"Rozroznij powtarzajace sie ID\"; value = \"1\"; }" file)
   (write-line "        : text { label = \"Np. P12 + P12 -> P12(1), P12(2).\"; }" file)
   (write-line "      }" file)
@@ -2621,20 +641,41 @@
   path
 )
 
-;; ======================================================
-;; ODCZYT USTAWIEN DCL
-;; ======================================================
 
-(defun gp-exp-enabled-kinds-from-dcl (/ result kind tile)
-  (setq result '())
-  (foreach kind '("POINT" "INSERT" "LINE" "POLYLINE" "ARC" "CIRCLE" "SOLID")
-    (setq tile (gp-exp-kind-tile kind))
-    (if (= (get_tile tile) "1")
-      (setq result (cons kind result))
+(defun gp-exp-update-id-numbering-tiles (/ renum-all auto-missing)
+  ;; UI:
+  ;; - "Nowa numeracja wszystkich" ma pierwszenstwo nad pozostala logika ID,
+  ;; - Prefiks/Start sa aktywne, gdy numerujemy braki albo wszystkie punkty,
+  ;; - przy pelnej renumeracji rozroznianie duplikatow nie ma znaczenia.
+  (setq renum-all (= (get_tile "renum_all") "1")
+        auto-missing (= (get_tile "auto_missing") "1"))
+
+  (if renum-all
+    (progn
+      (mode_tile "auto_missing" 1)
+      (mode_tile "fix_dupes" 1)
+      (mode_tile "a_p" 0)
+      (mode_tile "a_s" 0)
+    )
+    (progn
+      (mode_tile "auto_missing" 0)
+      (mode_tile "fix_dupes" 0)
+
+      (if auto-missing
+        (progn
+          (mode_tile "a_p" 0)
+          (mode_tile "a_s" 0)
+        )
+        (progn
+          (mode_tile "a_p" 1)
+          (mode_tile "a_s" 1)
+        )
+      )
     )
   )
-  (reverse result)
+  (princ)
 )
+
 
 (defun gp-exp-read-live-options (/ radius tolerance auto-start enabled)
   (setq radius (atof (get_tile "t_r")))
@@ -2657,6 +698,7 @@
     (cons 'solid-mode (if (get_tile "s_m") (get_tile "s_m") "1"))
     (cons 'z-mode (get_tile "z_conf_mode"))
     (cons 'renum-all (get_tile "renum_all"))
+    (cons 'auto-missing (get_tile "auto_missing"))
     (cons 'fix-dupes (get_tile "fix_dupes"))
     (cons 'auto-prefix (get_tile "a_p"))
     (cons 'auto-start auto-start)
@@ -2671,13 +713,6 @@
   )
 )
 
-(defun gp-exp-option (options key)
-  (cdr (assoc key options))
-)
-
-;; ======================================================
-;; URUCHOMIENIE ANALIZY DLA UI LUB EKSPORTU
-;; ======================================================
 
 (defun gp-exp-run-resolution (all-records texts options / records)
   (setq records
@@ -2705,55 +740,19 @@
     (gp-exp-option options 'unique-texts)
     (gp-exp-option options 'z-mode)
     (gp-exp-option options 'renum-all)
+    (gp-exp-option options 'auto-missing)
     (gp-exp-option options 'fix-dupes)
     (gp-exp-option options 'auto-prefix)
     (gp-exp-option options 'auto-start)
   )
 )
 
-(defun gp-exp-update-report-ui (resolution / records id-map z-map conflicts systems kind line)
-  (setq records (cdr (assoc 'records resolution))
-        id-map (cdr (assoc 'id-map resolution))
-        z-map (cdr (assoc 'z-map resolution))
-        conflicts (cdr (assoc 'conflicts resolution))
-        systems (gp-exp-detect-record-system records))
 
-  (start_list "type_stats")
-  (if records
-    (foreach kind '("POINT" "INSERT" "LINE" "POLYLINE" "ARC" "CIRCLE" "SOLID")
-      (if (> (gp-exp-record-count-kind records kind) 0)
-        (add_list (gp-exp-stat-line records id-map z-map kind))
-      )
-    )
-    (add_list "Brak wlaczonych punktow do eksportu.")
+(defun gp-exp-build-output-lines
+  (resolution options /
+    records id-map z-map format geo-mode offset
+    lines record rid pt id-entry z-entry id z x y line
   )
-  (end_list)
-
-  (set_tile "summary" (gp-exp-total-source-summary records id-map z-map))
-  (set_tile "sys_info"
-    (strcat
-      "Uklad: " (car systems)
-      (if (cadr systems) " | UWAGA: niespojne wspolrzedne" "")
-    )
-  )
-
-  (start_list "z_conflicts")
-  (if conflicts
-    (foreach line conflicts
-      (add_list (cadr line))
-    )
-    (add_list "Brak konfliktow Z dla aktualnych ustawien.")
-  )
-  (end_list)
-  (set_tile "z_conflicts" "0")
-  resolution
-)
-
-;; ======================================================
-;; ZAPIS WYNIKU
-;; ======================================================
-
-(defun gp-exp-build-output-lines (resolution options / records id-map z-map format geo-mode offset lines record rid pt id-entry z-entry id z x y line)
   (setq records (cdr (assoc 'records resolution))
         id-map (cdr (assoc 'id-map resolution))
         z-map (cdr (assoc 'z-map resolution))
@@ -2767,10 +766,16 @@
           pt (gp-exp-record-get record 'pt)
           id-entry (gp-exp-map-get id-map rid)
           z-entry (gp-exp-map-get z-map rid)
-          id (cdr (assoc 'value id-entry))
+          id (if id-entry (cdr (assoc 'value id-entry)) "")
           z (+ (cdr (assoc 'value z-entry)) offset)
           x (car pt)
           y (cadr pt))
+
+    ;; Przy wylaczonym AUTO brakujace ID jest jawnie pustym tekstem.
+    ;; Chroni to TXT przed bledem STRCAT na NIL; PTS i tak nie zapisuje ID.
+    (if (not (gp-exp-nonempty-p id))
+      (setq id "")
+    )
 
     (if (= format "pts")
       (if (= geo-mode "geo")
@@ -2814,21 +819,6 @@
   (reverse lines)
 )
 
-(defun gp-exp-write-output (filename lines format / file line)
-  (setq file (open filename "w"))
-  (if (= format "pts")
-    (write-line (itoa (length lines)) file)
-  )
-  (foreach line lines
-    (write-line line file)
-  )
-  (close file)
-  (length lines)
-)
-
-;; ======================================================
-;; GLOWNA KOMENDA
-;; ======================================================
 
 (defun c:EKSPORT_PIKIET_V23
   (
@@ -2836,7 +826,7 @@
     old-err f dcl-id dcl-file
     ss collected all-records texts object-count point-count
     run-analysis options last-options resolution conflict-items conflict-index
-    status filename output-lines output-count systems
+    status filename output-lines output-count systems missing-id-count
   )
 
   (setq old-err *error*
@@ -2915,6 +905,9 @@
           (add_list "Brak analizy.")
           (end_list)
 
+          ;; Ustaw stan pol numeracji zgodnie z wartosciami domyslnymi.
+          (gp-exp-update-id-numbering-tiles)
+
           ;; Tolerancja XY ma znaczenie tylko przy usuwaniu duplikatow.
           (action_tile
             "keep"
@@ -2923,6 +916,17 @@
           (action_tile
             "rem"
             "(mode_tile \"d_tol\" 0)"
+          )
+
+          ;; Prefiks/Start sa aktywne dla numeracji brakow albo pelnej
+          ;; renumeracji. Przy renum_all pozostale opcje ID sa tylko informacyjne.
+          (action_tile
+            "auto_missing"
+            "(gp-exp-update-id-numbering-tiles)"
+          )
+          (action_tile
+            "renum_all"
+            "(gp-exp-update-id-numbering-tiles)"
           )
 
           (action_tile
@@ -2964,39 +968,67 @@
               (if (= (length (cdr (assoc 'records resolution))) 0)
                 (alert "Brak punktow do eksportu po zastosowaniu filtrow.")
                 (progn
-                  (setq filename
-                    (gp-exp-save-file-dialog
-                      (gp-exp-option options 'out-format)
-                    )
+                  (setq missing-id-count
+                    (cdr (assoc 'missing-id-records resolution))
+                  )
+                  (if (not missing-id-count)
+                    (setq missing-id-count 0)
                   )
 
-                  (if filename
-                    (progn
-                      (setq output-lines
-                        (gp-exp-build-output-lines resolution options)
+                  ;; TXT wymaga kolumny ID. Jezeli uzytkownik swiadomie
+                  ;; wylaczy AUTO dla brakow, zatrzymujemy zapis zamiast
+                  ;; tworzyc niejednoznaczny plik z przesunietymi kolumnami.
+                  ;; PTS nie zapisuje ID, wiec ten warunek go nie dotyczy.
+                  (if
+                    (and
+                      (= (gp-exp-option options 'out-format) "txt")
+                      (> missing-id-count 0)
+                    )
+                    (alert
+                      (strcat
+                        "Nie mozna zapisac TXT: "
+                        (itoa missing-id-count)
+                        " punktow nie ma ID."
+                        "\nWlacz 'Numeruj punkty bez znalezionego ID'"
+                        "\nalbo popraw dane i uruchom analize ponownie."
                       )
-                      (setq output-count
-                        (gp-exp-write-output
-                          filename
-                          output-lines
+                    )
+                    (progn
+                      (setq filename
+                        (gp-exp-save-file-dialog
                           (gp-exp-option options 'out-format)
                         )
                       )
-                      (setq systems
-                        (gp-exp-detect-record-system
-                          (cdr (assoc 'records resolution))
-                        )
-                      )
 
-                      (alert
-                        (strcat
-                          "Zapis zakonczony."
-                          "\nPunkty: " (itoa output-count)
-                          "\nFormat: " (strcase (gp-exp-option options 'out-format))
-                          "\nUklad: " (car systems)
-                          "\nOffset Z: "
-                          (rtos (gp-exp-option options 'z-offset) 2 3)
-                          " m"
+                      (if filename
+                        (progn
+                          (setq output-lines
+                            (gp-exp-build-output-lines resolution options)
+                          )
+                          (setq output-count
+                            (gp-exp-write-output
+                              filename
+                              output-lines
+                              (gp-exp-option options 'out-format)
+                            )
+                          )
+                          (setq systems
+                            (gp-exp-detect-record-system
+                              (cdr (assoc 'records resolution))
+                            )
+                          )
+
+                          (alert
+                            (strcat
+                              "Zapis zakonczony."
+                              "\nPunkty: " (itoa output-count)
+                              "\nFormat: " (strcase (gp-exp-option options 'out-format))
+                              "\nUklad: " (car systems)
+                              "\nOffset Z: "
+                              (rtos (gp-exp-option options 'z-offset) 2 3)
+                              " m"
+                            )
+                          )
                         )
                       )
                     )
@@ -3014,9 +1046,3 @@
   )
 )
 
-(defun c:EKSPORT_PIKIET_V22 ()
-  (c:EKSPORT_PIKIET_V23)
-)
-
-(princ "\nKomendy: EKSPORT_PIKIET_V23, EKSPORT_PIKIET_V22")
-(princ)
