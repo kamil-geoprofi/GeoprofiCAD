@@ -1,45 +1,235 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ApplicationPackage 
-    SchemaVersion="1.0" 
-    AutodeskProduct="AutoCAD" 
+
+<ApplicationPackage
+    SchemaVersion="1.0"
+    AutodeskProduct="AutoCAD"
     ProductType="Application"
-    Name="GeoprofiCAD" 
-    AppVersion="1.0.0" 
+    Name="GeoprofiCAD"
+    AppVersion="1.0.0"
     Author="Geoprofi"
     ProductCode="{A1B2C3D4-E5F6-47A8-B9C0-D1E2F3A4B5C6}">
 
     <Components>
-        <RuntimeRequirements OS="Win64" Platform="AutoCAD" SeriesMin="R24.0" SeriesMax="R25.2" />
-        <ComponentEntry AppName="Geoprofi_Config" ModuleName="./Contents/gp_Config.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Core" ModuleName="./Contents/gp_Core.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Core_Runtime" ModuleName="./Contents/core/gp_CoreRuntime.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_ProjectMemory" ModuleName="./Contents/core/gp_ProjectMemory.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Numbering" ModuleName="./Contents/core/gp_Numbering.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_CadObjects" ModuleName="./Contents/core/gp_CadObjects.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Workgroups" ModuleName="./Contents/core/gp_Workgroups.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_PikietaSchema" ModuleName="./Contents/core/gp_PikietaSchema.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_TextRadar" ModuleName="./Contents/core/gp_TextRadar.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_PikietaWriters" ModuleName="./Contents/core/gp_PikietaWriters.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_PikietaData" ModuleName="./Contents/core/gp_PikietaData.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_PikietaFactory" ModuleName="./Contents/core/gp_PikietaFactory.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_PikietaConversion" ModuleName="./Contents/core/gp_PikietaConversion.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_SetupDialog" ModuleName="./Contents/ui/gp_SetupDialog.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_SetupAutosave" ModuleName="./Contents/ui/gp_SetupAutosave.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_SetupPrefix" ModuleName="./Contents/ui/gp_SetupPrefix.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_SetupGroup" ModuleName="./Contents/ui/gp_SetupGroup.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_SetupMain" ModuleName="./Contents/ui/gp_SetupMain.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Import" ModuleName="./Contents/gp_Import.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_Export" ModuleName="./Contents/gp_Export.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_ExportRadarCompat" ModuleName="./Contents/core/gp_ExportRadarCompat.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_Wstaw" ModuleName="./Contents/gp_WstawPikiete.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_Spadki" ModuleName="./Contents/gp_Spadki.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_Niw_Os" ModuleName="./Contents/gp_NiwelacjaOsi.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_Niw_Kraw" ModuleName="./Contents/gp_NiwelacjaKrawedzi.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_Niw_Multi" ModuleName="./Contents/gp_NiwelacjaMulti.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_Siatka" ModuleName="./Contents/gp_SiatkaPunktow.lsp" PerDocument="True" /> 
-        <ComponentEntry AppName="Geoprofi_PomiarSpadku" ModuleName="./Contents/gp_PomiarSpadku.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_UsunPktMulti" ModuleName="./Contents/gp_UsunPunktyZMulti.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_UsunPikietyZakres" ModuleName="./Contents/gp_UsunPikietyZakres.lsp" PerDocument="True" />
-        <ComponentEntry AppName="Geoprofi_UI" ModuleName="./Contents/GeoprofiCAD.cuix" />
+
+        <!--
+            AutoCAD laduje ComponentEntry OD DOLU DO GORY.
+            Dlatego kolejnosc w tym pliku jest celowo odwrotna
+            wzgledem rzeczywistej kolejnosci uruchamiania.
+        -->
+
+        <RuntimeRequirements
+            OS="Win64"
+            Platform="AutoCAD"
+            SeriesMin="R24.0"
+            SeriesMax="R25.2"
+            SupportPath="./Contents;./Contents/core;./Contents/ui"
+        />
+
+        <!-- ===================================================== -->
+        <!-- LADOWANE NA KONCU                                      -->
+        <!-- ===================================================== -->
+
+        <ComponentEntry
+            AppName="Geoprofi_UI"
+            ModuleName="./Contents/GeoprofiCAD.cuix"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_UsunPikietyZakres"
+            ModuleName="./Contents/gp_UsunPikietyZakres.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_UsunPktMulti"
+            ModuleName="./Contents/gp_UsunPunktyZMulti.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_PomiarSpadku"
+            ModuleName="./Contents/gp_PomiarSpadku.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Siatka"
+            ModuleName="./Contents/gp_SiatkaPunktow.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Niw_Multi"
+            ModuleName="./Contents/gp_NiwelacjaMulti.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Niw_Kraw"
+            ModuleName="./Contents/gp_NiwelacjaKrawedzi.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Niw_Os"
+            ModuleName="./Contents/gp_NiwelacjaOsi.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Spadki"
+            ModuleName="./Contents/gp_Spadki.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Wstaw"
+            ModuleName="./Contents/gp_WstawPikiete.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_ExportRadarCompat"
+            ModuleName="./Contents/core/gp_ExportRadarCompat.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Export"
+            ModuleName="./Contents/gp_Export.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Import"
+            ModuleName="./Contents/gp_Import.lsp"
+            PerDocument="True"
+        />
+
+        <!-- ===================================================== -->
+        <!-- UI GEO_SETUP                                          -->
+        <!-- ===================================================== -->
+
+        <ComponentEntry
+            AppName="Geoprofi_SetupMain"
+            ModuleName="./Contents/ui/gp_SetupMain.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_SetupGroup"
+            ModuleName="./Contents/ui/gp_SetupGroup.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_SetupPrefix"
+            ModuleName="./Contents/ui/gp_SetupPrefix.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_SetupAutosave"
+            ModuleName="./Contents/ui/gp_SetupAutosave.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_SetupDialog"
+            ModuleName="./Contents/ui/gp_SetupDialog.lsp"
+            PerDocument="True"
+        />
+
+        <!-- ===================================================== -->
+        <!-- CORE - PIKIETY                                        -->
+        <!-- ===================================================== -->
+
+        <ComponentEntry
+            AppName="Geoprofi_PikietaConversion"
+            ModuleName="./Contents/core/gp_PikietaConversion.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_PikietaFactory"
+            ModuleName="./Contents/core/gp_PikietaFactory.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_PikietaData"
+            ModuleName="./Contents/core/gp_PikietaData.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_PikietaWriters"
+            ModuleName="./Contents/core/gp_PikietaWriters.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_TextRadar"
+            ModuleName="./Contents/core/gp_TextRadar.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_PikietaSchema"
+            ModuleName="./Contents/core/gp_PikietaSchema.lsp"
+            PerDocument="True"
+        />
+
+        <!-- ===================================================== -->
+        <!-- CORE - PODSTAWY                                       -->
+        <!-- ===================================================== -->
+
+        <ComponentEntry
+            AppName="Geoprofi_Workgroups"
+            ModuleName="./Contents/core/gp_Workgroups.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_CadObjects"
+            ModuleName="./Contents/core/gp_CadObjects.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Numbering"
+            ModuleName="./Contents/core/gp_Numbering.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_ProjectMemory"
+            ModuleName="./Contents/core/gp_ProjectMemory.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Core_Runtime"
+            ModuleName="./Contents/core/gp_CoreRuntime.lsp"
+            PerDocument="True"
+        />
+
+        <!-- ===================================================== -->
+        <!-- LADOWANE JAKO PIERWSZE                                -->
+        <!-- ===================================================== -->
+
+        <ComponentEntry
+            AppName="Geoprofi_Core"
+            ModuleName="./Contents/gp_Core.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
+            AppName="Geoprofi_Config"
+            ModuleName="./Contents/gp_Config.lsp"
+            PerDocument="True"
+        />
+
     </Components>
+
 </ApplicationPackage>
