@@ -53,6 +53,12 @@
         />
 
         <ComponentEntry
+            AppName="Geoprofi_SiatkaPionowa"
+            ModuleName="./Contents/gp_SiatkaPionowa.lsp"
+            PerDocument="True"
+        />
+
+        <ComponentEntry
             AppName="Geoprofi_Siatka"
             ModuleName="./Contents/gp_SiatkaPunktow.lsp"
             PerDocument="True"
